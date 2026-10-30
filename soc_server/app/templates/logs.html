@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% from "base.html" import pager %}
+{% block title %}Nhật ký log - Agentic SOC{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><i class="bi bi-journal-text"></i> Nhật ký log tập trung</h4>
+  <a class="btn btn-outline-success btn-sm" href="{{ url_for('main.logs_export', **request.args) }}"><i class="bi bi-filetype-csv"></i> Xuất CSV (theo bộ lọc)</a>
+</div>
+<div class="card mb-3"><div class="card-body py-3">
+  <form class="row g-2 align-items-end" method="get">
+    <div class="col-md-2"><label class="form-label small mb-0">Máy trạm</label>
+      <select class="form-select form-select-sm" name="host"><option value="">Tất cả</option>{% for h in hosts %}<option value="{{ h }}" {{ 'selected' if args.get('host') == h }}>{{ h }}</option>{% endfor %}</select></div>
+    <div class="col-md-2"><label class="form-label small mb-0">Nguồn</label>
+      <select class="form-select form-select-sm" name="source"><option value="">Tất cả</option>{% for s in sources %}<option value="{{ s }}" {{ 'selected' if args.get('source') == s }}>{{ s }}</option>{% endfor %}</select></div>
+    <div class="col-md-2"><label class="form-label small mb-0">Mức độ</label>
+      <select class="form-select form-select-sm" name="severity"><option value="">Tất cả</option>{% for s in severities %}<option value="{{ s }}" {{ 'selected' if args.get('severity') == s }}>{{ s|sev_label }}</option>{% endfor %}<option value="critical,high" {{ 'selected' if args.get('severity') == 'critical,high' }}>Cao + Nghiêm trọng</option></select></div>
+    <div class="col-md-2"><label class="form-label small mb-0">Phân loại</label>
+      <select class="form-select form-select-sm" name="category"><option value="">Tất cả</option>{% for c in categories %}<option value="{{ c }}" {{ 'selected' if args.get('category') == c }}>{{ c }}</option>{% endfor %}</select></div>
+    <div class="col-md-2"><label class="form-label small mb-0">Kết quả</label>
+      <select class="form-select form-select-sm" name="outcome"><option value="">Tất cả</option>{% for o in ['success', 'failure', 'unknown'] %}<option value="{{ o }}" {{ 'selected' if args.get('outcome') == o }}>{{ o }}</option>{% endfor %}</select></div>
+    <div class="col-md-2"><label class="form-label small mb-0">Tài khoản</label><input class="form-control form-control-sm" name="user" value="{{ args.get('user', '') }}"></div>
+    <div class="col-md-2"><label class="form-label small mb-0">IP nguồn</label><input class="form-control form-control-sm" name="src_ip" value="{{ args.get('src_ip', '') }}"></div>
+    <div class="col-md-2"><label class="form-label small mb-0">Event ID</label><input class="form-control form-control-sm" name="event_id" value="{{ args.get('event_id', '') }}" placeholder="4625, ssh_failed_password"></div>
+    <div class="col-md-2"><label class="form-label small mb-0">Từ (giờ địa phương)</label><input class="form-control form-control-sm" type="datetime-local" name="from" value="{{ args.get('from', '') }}"></div>
+    <div class="col-md-2"><label class="form-label small mb-0">Đến</label><input class="form-control form-control-sm" type="datetime-local" name="to" value="{{ args.get('to', '') }}"></div>
+    <div class="col-md-3"><label class="form-label small mb-0">Từ khóa</label><input class="form-control form-control-sm" name="q" value="{{ args.get('q', '') }}" placeholder="Tìm trong thông điệp, raw, tiến trình"></div>
+    <div class="col-md-1 d-flex gap-1"><button class="btn btn-primary btn-sm w-100"><i class="bi bi-search"></i></button><a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.logs') }}" title="Xóa bộ lọc"><i class="bi bi-x"></i></a></div>
+  </form>
+</div></div>
+<div class="card">
+  <div class="card-header d-flex justify-content-between"><span>Kết quả: {{ "{:,}".format(pagination.total) }} sự kiện</span><span class="small text-muted">Hiển thị {{ pagination.per_page }}/trang</span></div>
+  <div class="table-responsive"><table class="table table-sm table-hover mb-0">
+    <thead class="table-light"><tr><th>Thời gian</th><th>Máy</th><th>Nguồn</th><th>Mức</th><th>Event ID</th><th>Hành động</th><th>Tài khoản</th><th>IP nguồn</th><th>Thông điệp</th></tr></thead>
+    <tbody>
+    {% for e in events %}
+    <tr>
+      <td class="text-nowrap"><a href="{{ url_for('main.log_detail', event_id=e.id) }}">{{ e.event_time|localtime }}</a></td>
+      <td>{{ e.host }}</td><td><span class="badge bg-light text-dark border">{{ e.source }}</span></td>
+      <td><span class="badge sev-{{ e.severity }}">{{ e.severity|sev_label }}</span></td>
+      <td class="mono">{{ e.event_id or '-' }}</td><td>{{ e.action }}{% if e.outcome == 'failure' %} <i class="bi bi-x-circle text-danger"></i>{% endif %}</td>
+      <td>{{ e.user_name or '-' }}</td><td class="mono">{% if e.src_ip %}<a href="{{ url_for('main.logs', src_ip=e.src_ip) }}">{{ e.src_ip }}</a>{% else %}-{% endif %}</td>
+      <td class="msg-cell" title="{{ e.message }}">{{ e.message }}</td>
+    </tr>
+    {% else %}<tr><td colspan="9" class="text-center text-muted py-4">Không có sự kiện phù hợp bộ lọc.</td></tr>{% endfor %}
+    </tbody></table></div>
+  <div class="card-body py-2">{{ pager(pagination, 'main.logs') }}</div>
+</div>
+{% endblock %}

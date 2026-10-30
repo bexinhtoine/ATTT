@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Thêm luật' if is_new else 'Sửa luật' }} - Agentic SOC{% endblock %}
+{% block content %}
+<h4 class="mb-3"><i class="bi bi-funnel"></i> {{ 'Thêm luật phát hiện' if is_new else 'Sửa luật ' + (rule.code or '') }}</h4>
+<form method="post" class="row g-3">{{ csrf_field() }}
+  <div class="col-lg-8">
+    <div class="card mb-3"><div class="card-body">
+      <div class="row g-2">
+        <div class="col-md-2"><label class="form-label">Mã</label><input class="form-control" name="code" value="{{ rule.code or '' }}" placeholder="R22"></div>
+        <div class="col-md-10"><label class="form-label">Tên luật *</label><input class="form-control" name="name" value="{{ rule.name or '' }}" required></div>
+        <div class="col-12"><label class="form-label">Mô tả</label><textarea class="form-control" name="description" rows="2">{{ rule.description or '' }}</textarea></div>
+        <div class="col-md-4"><label class="form-label">Loại luật</label><select class="form-select" name="rule_type" id="rule_type">{% for t in ['match', 'threshold', 'sequence'] %}<option value="{{ t }}" {{ 'selected' if rule.rule_type == t }}>{{ t|rule_type_label }}</option>{% endfor %}</select></div>
+        <div class="col-md-4"><label class="form-label">Mức độ cảnh báo</label><select class="form-select" name="severity">{% for s in ['critical', 'high', 'medium', 'low', 'info'] %}<option value="{{ s }}" {{ 'selected' if rule.severity == s }}>{{ s|sev_label }}</option>{% endfor %}</select></div>
+        <div class="col-md-4"><label class="form-label">Trạng thái</label><select class="form-select" name="enabled"><option value="1" {{ 'selected' if rule.enabled }}>Bật</option><option value="0" {{ 'selected' if not rule.enabled }}>Tắt</option></select></div>
+        <div class="col-12"><label class="form-label">Điều kiện (JSON) *</label><textarea class="form-control mono" name="conditions" rows="6" required>{{ rule.conditions_dict|pretty_json if rule.conditions else '{}' }}</textarea>
+          <div class="form-text">Ví dụ match: <code>{"source": "windows.security", "event_id": ["4625"]}</code> · threshold: <code>{"action": ["logon_failed"]}</code> · sequence: <code>{"precondition": {"action": ["logon_failed"]}, "trigger": {"action": ["logon_success"]}, "min_count": 3}</code>. Các khóa hỗ trợ: source, event_id, action, category, outcome, host, process, severity_min, user_in, regex, not_regex, field, extra{}, src_ip_public.</div></div>
+        <div class="col-md-3 threshold-only"><label class="form-label">Ngưỡng (số lượng)</label><input class="form-control" type="number" min="1" name="threshold_count" value="{{ rule.threshold_count or 5 }}"></div>
+        <div class="col-md-3 threshold-only"><label class="form-label">Cửa sổ (giây)</label><input class="form-control" type="number" min="10" name="window_seconds" value="{{ rule.window_seconds or 300 }}"></div>
+        <div class="col-md-3 threshold-only"><label class="form-label">Gom nhóm theo</label><select class="form-select" name="group_by">{% for g in ['src_ip', 'user_name', 'host'] %}<option value="{{ g }}" {{ 'selected' if rule.group_by == g }}>{{ g }}</option>{% endfor %}</select></div>
+        <div class="col-md-3 threshold-only"><label class="form-label">Đếm giá trị khác nhau của</label><input class="form-control" name="distinct_field" value="{{ rule.distinct_field or '' }}" placeholder="user_name (tùy chọn)"></div>
+        <div class="col-12"><label class="form-label">Mẫu tiêu đề cảnh báo</label><input class="form-control" name="title_template" value="{{ rule.title_template or '' }}" placeholder="Dò mật khẩu SSH từ {src_ip} tới {host} ({count} lần)">
+          <div class="form-text">Biến: {host} {src_ip} {user} {count} {event_id} {action} {extra.TenTruong}</div></div>
+        <div class="col-md-6"><label class="form-label">MITRE Tactic</label><input class="form-control" name="mitre_tactic" value="{{ rule.mitre_tactic or '' }}" placeholder="Credential Access"></div>
+        <div class="col-md-6"><label class="form-label">MITRE Technique</label><input class="form-control" name="mitre_technique" value="{{ rule.mitre_technique or '' }}" placeholder="T1110.001"></div>
+      </div>
+    </div></div>
+    <button class="btn btn-primary"><i class="bi bi-save"></i> Lưu luật</button>
+    <a class="btn btn-outline-secondary" href="{{ url_for('main.rules') }}">Hủy</a>
+  </div>
+  <div class="col-lg-4"><div class="card"><div class="card-header">Hướng dẫn</div><div class="card-body small">
+    <p><strong>Khớp mẫu (match):</strong> mỗi sự kiện thỏa điều kiện sinh (hoặc gộp vào) một cảnh báo. Dùng cho sự kiện đơn lẻ có ý nghĩa cao như 1102, 4720, 7045.</p>
+    <p><strong>Ngưỡng (threshold):</strong> đếm sự kiện khớp trong cửa sổ trượt, gom theo IP/tài khoản/máy. Đặt <em>distinct_field</em> để đếm số giá trị khác nhau (password spraying).</p>
+    <p><strong>Chuỗi (sequence):</strong> sự kiện <em>trigger</em> xảy ra sau ≥ <em>min_count</em> sự kiện <em>precondition</em> cùng nhóm trong cửa sổ.</p>
+    <p class="mb-0">Trường <em>regex</em> áp dụng trên <em>field</em> (mặc định message), không phân biệt hoa thường. <em>extra</em> so khớp các trường Windows EventData như LogonType, ServiceName.</p>
+  </div></div></div>
+</form>
+{% endblock %}
+{% block scripts %}<script>
+function toggleThreshold(){const t=document.getElementById('rule_type').value;document.querySelectorAll('.threshold-only').forEach(el=>el.style.opacity=(t==='match'?'.45':'1'));}
+document.getElementById('rule_type').addEventListener('change',toggleThreshold);toggleThreshold();
+</script>{% endblock %}

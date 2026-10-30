@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Cài đặt hệ thống - Agentic SOC{% endblock %}
+{% block content %}
+<h4 class="mb-3"><i class="bi bi-gear"></i> Cài đặt hệ thống</h4>
+<div class="row g-3">
+  <div class="col-lg-6"><div class="card h-100"><div class="card-header">Module Agentic AI</div><div class="card-body small">
+    <table class="table table-sm mb-2"><tbody>
+      <tr><th style="width: 220px">Trạng thái</th><td>{% if llm.available %}<span class="badge bg-success">Claude API khả dụng</span>{% else %}<span class="badge bg-secondary">Chế độ suy luận cục bộ</span> <span class="text-muted">({{ llm.unavailable_reason }})</span>{% endif %}</td></tr>
+      <tr><th>Mô hình</th><td><code>{{ llm.model }}</code></td></tr>
+      <tr><th>Mức nỗ lực suy luận (effort)</th><td>{{ cfg.AI_EFFORT }}</td></tr>
+      <tr><th>Tự động phân loại cảnh báo mới</th><td>{{ 'Bật' if cfg.AI_AUTO_TRIAGE else 'Tắt' }}</td></tr>
+      <tr><th>Số vòng gọi công cụ tối đa</th><td>{{ cfg.AI_MAX_TOOL_ITERATIONS }}</td></tr>
+    </tbody></table>
+    <p class="text-muted mb-0">Đặt biến môi trường <code>ANTHROPIC_API_KEY</code> trước khi khởi động server để bật đường LLM; <code>SOC_AI_MODEL</code>, <code>SOC_AI_EFFORT</code>, <code>SOC_AI_AUTO_TRIAGE</code> để tinh chỉnh.</p>
+  </div></div></div>
+  <div class="col-lg-6"><div class="card h-100"><div class="card-header">Thu thập & lưu trữ</div><div class="card-body small">
+    <table class="table table-sm mb-0"><tbody>
+      <tr><th style="width: 220px">Enrollment token</th><td><code>{{ cfg.ENROLLMENT_TOKEN }}</code></td></tr>
+      <tr><th>Agent coi là offline sau</th><td>{{ cfg.AGENT_OFFLINE_AFTER }} giây</td></tr>
+      <tr><th>Số sự kiện tối đa mỗi lô</th><td>{{ cfg.MAX_EVENTS_PER_BATCH }}</td></tr>
+      <tr><th>Thời gian lưu log</th><td>{{ cfg.RETENTION_DAYS }} ngày</td></tr>
+      <tr><th>Múi giờ hiển thị</th><td>{{ cfg.TIMEZONE }}</td></tr>
+      <tr><th>Cơ sở dữ liệu</th><td class="mono">{{ db_path }}</td></tr>
+      <tr><th>Số bản ghi</th><td>{{ "{:,}".format(counts.events) }} sự kiện · {{ counts.alerts }} cảnh báo · {{ counts.agents }} máy trạm · {{ counts.rules }} luật · {{ counts.kb }} bài tri thức · {{ counts.ai_runs }} lượt AI</td></tr>
+    </tbody></table>
+  </div></div></div>
+</div>
+<div class="card mt-3"><div class="card-header">Thống kê các lượt chạy tác tử AI</div>
+  <table class="table table-sm mb-0"><thead class="table-light"><tr><th>Tác tử</th><th>Chế độ</th><th class="text-end">Số lượt</th><th class="text-end">Thời gian TB (ms)</th><th class="text-end">Token vào</th><th class="text-end">Token ra</th></tr></thead><tbody>
+  {% for name, mode, n, avg_ms, tin, tout in ai_runs %}<tr><td>{{ name }}</td><td>{{ mode }}</td><td class="text-end">{{ n }}</td><td class="text-end">{{ (avg_ms or 0)|round|int }}</td><td class="text-end">{{ tin or 0 }}</td><td class="text-end">{{ tout or 0 }}</td></tr>{% else %}<tr><td colspan="6" class="text-muted text-center">Chưa có lượt chạy nào</td></tr>{% endfor %}
+  </tbody></table></div>
+{% endblock %}

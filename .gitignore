@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Cơ sở dữ liệu runtime của Web SOC (tạo lại bằng run.py / tools/rebuild_demo.py)
+soc_server/instance/*.db
+soc_server/instance/*.db-wal
+soc_server/instance/*.db-shm
+soc_server/instance/*.bak
+
+# Trạng thái và hàng đợi của SOC Agent (chứa API key)
+soc_agent/agent_state.json
+soc_agent/agent_spool.json
+soc_agent/config.json
+
+# Tệp khóa của Word / tạm
+~$*.docx
+*.tmp
+.DS_Store
+Thumbs.db

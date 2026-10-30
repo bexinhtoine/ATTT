@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Báo cáo & thống kê - Agentic SOC{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 no-print">
+  <h4 class="mb-0"><i class="bi bi-bar-chart-line"></i> Báo cáo & thống kê</h4>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-success btn-sm" href="{{ url_for('main.logs_export', **{'from': args.get('from', ''), 'to': args.get('to', '')}) }}"><i class="bi bi-filetype-csv"></i> Xuất sự kiện</a>
+    <a class="btn btn-outline-success btn-sm" href="{{ url_for('main.alerts_export') }}"><i class="bi bi-filetype-csv"></i> Xuất cảnh báo</a>
+    <button class="btn btn-outline-dark btn-sm" onclick="window.print()"><i class="bi bi-printer"></i> In / Lưu PDF</button>
+  </div>
+</div>
+<form class="row g-2 mb-3 no-print" method="get">
+  <div class="col-md-3"><label class="form-label small mb-0">Từ</label><input class="form-control form-control-sm" type="datetime-local" name="from" value="{{ args.get('from', '') }}"></div>
+  <div class="col-md-3"><label class="form-label small mb-0">Đến</label><input class="form-control form-control-sm" type="datetime-local" name="to" value="{{ args.get('to', '') }}"></div>
+  <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary btn-sm w-100">Tạo báo cáo</button></div>
+  <div class="col-md-4 d-flex align-items-end small text-muted">Mặc định: 24 giờ gần nhất. Khoảng thời gian tính theo giờ địa phương.</div>
+</form>
+<div class="card mb-3"><div class="card-body">
+  <h5 class="mb-1">Báo cáo an ninh tổng hợp</h5>
+  <div class="text-muted small mb-3">Khoảng thời gian: {{ r.since|localtime }} → {{ r.until|localtime }} · Lập lúc {{ now|localtime }} bởi {{ current_user.full_name or current_user.username }}</div>
+  <div class="row g-3 text-center">
+    <div class="col-md-3"><div class="kpi-label">Sự kiện thu thập</div><div class="kpi-value text-primary">{{ "{:,}".format(r.events_total) }}</div></div>
+    <div class="col-md-3"><div class="kpi-label">Cảnh báo phát sinh</div><div class="kpi-value text-danger">{{ r.alerts_total }}</div></div>
+    <div class="col-md-3"><div class="kpi-label">Đã xử lý / dương tính giả</div><div class="kpi-value text-success">{{ r.alerts_by_status.get('resolved', 0) }} / {{ r.alerts_by_status.get('false_positive', 0) }}</div></div>
+    <div class="col-md-3"><div class="kpi-label">Thời gian xử lý TB (MTTR)</div><div class="kpi-value text-info">{{ r.mttr_minutes if r.mttr_minutes is not none else '-' }} <small class="fs-6">phút</small></div></div>
+  </div>
+</div></div>
+<div class="row g-3 mb-3">
+  <div class="col-lg-6"><div class="card h-100"><div class="card-header">Sự kiện theo mức độ</div><div class="card-body chart-box"><canvas id="rptSev"></canvas></div></div></div>
+  <div class="col-lg-6"><div class="card h-100"><div class="card-header">Sự kiện theo phân loại</div><div class="card-body chart-box"><canvas id="rptCat"></canvas></div></div></div>
+</div>
+{% if r.events_per_hour %}<div class="card mb-3"><div class="card-header">Số sự kiện theo giờ</div><div class="card-body chart-box"><canvas id="rptHour"></canvas></div></div>{% endif %}
+<div class="row g-3 mb-3">
+  <div class="col-lg-6"><div class="card h-100"><div class="card-header">Cảnh báo theo luật (top 10)</div>
+    <table class="table table-sm mb-0"><thead class="table-light"><tr><th>Luật</th><th class="text-end">Số cảnh báo</th></tr></thead><tbody>{% for x in r.alerts_by_rule %}<tr><td>{{ x.code }} {{ x.rule }}</td><td class="text-end">{{ x.count }}</td></tr>{% else %}<tr><td colspan="2" class="text-muted text-center">Không có</td></tr>{% endfor %}</tbody></table></div></div>
+  <div class="col-lg-6"><div class="card h-100"><div class="card-header">Cảnh báo theo mức độ, trạng thái và kết luận AI</div><div class="card-body small">
+    <div class="mb-2">{% for s in ['critical', 'high', 'medium', 'low', 'info'] %}<span class="badge sev-{{ s }}">{{ s|sev_label }}: {{ r.alerts_by_severity.get(s, 0) }}</span> {% endfor %}</div>
+    <div class="mb-2">{% for s, n in r.alerts_by_status.items() %}<span class="badge status-{{ s }}">{{ s|status_label }}: {{ n }}</span> {% endfor %}</div>
+    <div>{% for v, n in r.ai_verdicts.items() %}<span class="badge {{ v|verdict_class }}">{{ v|verdict_label }}: {{ n }}</span> {% else %}<span class="text-muted">AI chưa phân loại cảnh báo nào trong khoảng này.</span>{% endfor %}</div>
+  </div></div></div>
+</div>
+<div class="row g-3">
+  <div class="col-lg-3"><div class="card h-100"><div class="card-header">Máy nhiều sự kiện nhất</div><table class="table table-sm mb-0"><tbody>{% for x in r.top_hosts %}<tr><td>{{ x.key }}</td><td class="text-end">{{ x.count }}</td></tr>{% endfor %}</tbody></table></div></div>
+  <div class="col-lg-3"><div class="card h-100"><div class="card-header">Nguồn log</div><table class="table table-sm mb-0"><tbody>{% for x in r.top_sources %}<tr><td>{{ x.key }}</td><td class="text-end">{{ x.count }}</td></tr>{% endfor %}</tbody></table></div></div>
+  <div class="col-lg-3"><div class="card h-100"><div class="card-header">IP nguồn thất bại nhiều nhất</div><table class="table table-sm mb-0"><tbody>{% for x in r.top_src_ips %}<tr><td class="mono">{{ x.key }}</td><td class="text-end">{{ x.count }}</td></tr>{% endfor %}</tbody></table></div></div>
+  <div class="col-lg-3"><div class="card h-100"><div class="card-header">Tài khoản bị thử nhiều nhất</div><table class="table table-sm mb-0"><tbody>{% for x in r.top_failed_users %}<tr><td>{{ x.key }}</td><td class="text-end">{{ x.count }}</td></tr>{% endfor %}</tbody></table></div></div>
+</div>
+<div class="card mt-3"><div class="card-header">Hành động phổ biến nhất</div><table class="table table-sm mb-0"><tbody>{% for x in r.top_actions %}<tr><td>{{ x.key }}</td><td class="text-end">{{ x.count }}</td></tr>{% endfor %}</tbody></table></div>
+{% endblock %}
+{% block scripts %}
+<script>
+const R = {{ {'sev': r.events_by_severity, 'cat': r.events_by_category, 'hour': r.events_per_hour}|tojson }};
+const sevKeys = ['critical','high','medium','low','info'];
+new Chart(document.getElementById('rptSev'), {type: 'bar', data: {labels: sevKeys.map(k => SEV_LABELS[k]), datasets: [{label: 'Sự kiện', data: sevKeys.map(k => R.sev[k] || 0), backgroundColor: sevKeys.map(k => SEV_COLORS[k])}]}, options: {responsive: true, maintainAspectRatio: false, plugins: {legend: {display: false}}}});
+new Chart(document.getElementById('rptCat'), {type: 'pie', data: {labels: Object.keys(R.cat), datasets: [{data: Object.values(R.cat), backgroundColor: ['#0d6efd','#6610f2','#d63384','#fd7e14','#ffc107','#198754','#20c997','#0dcaf0','#6c757d','#adb5bd','#343a40']}]}, options: {responsive: true, maintainAspectRatio: false, plugins: {legend: {position: 'right'}}}});
+if (R.hour.length) new Chart(document.getElementById('rptHour'), {type: 'line', data: {labels: R.hour.map(x => x.label), datasets: [{label: 'Sự kiện/giờ', data: R.hour.map(x => x.count), borderColor: '#0d6efd', backgroundColor: 'rgba(13,110,253,.15)', fill: true, tension: .3}]}, options: {responsive: true, maintainAspectRatio: false, plugins: {legend: {display: false}}, scales: {y: {beginAtZero: true}}}});
+{% if printable %}window.addEventListener('load', () => setTimeout(() => window.print(), 600));{% endif %}
+</script>
+{% endblock %}

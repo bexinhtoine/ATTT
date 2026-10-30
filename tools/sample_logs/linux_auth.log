@@ -1,0 +1,16 @@
+Oct 26 09:58:01 ubuntu-web01 sshd[2231]: Accepted password for alice from 10.0.0.5 port 50122 ssh2
+Oct 26 09:58:02 ubuntu-web01 sshd[2231]: pam_unix(sshd:session): session opened for user alice(uid=1001) by (uid=0)
+Oct 26 10:01:14 ubuntu-web01 sshd[2301]: Failed password for root from 203.0.113.66 port 51001 ssh2
+Oct 26 10:01:17 ubuntu-web01 sshd[2301]: Failed password for root from 203.0.113.66 port 51004 ssh2
+Oct 26 10:01:20 ubuntu-web01 sshd[2301]: Failed password for root from 203.0.113.66 port 51009 ssh2
+Oct 26 10:01:23 ubuntu-web01 sshd[2301]: Failed password for root from 203.0.113.66 port 51012 ssh2
+Oct 26 10:01:26 ubuntu-web01 sshd[2301]: Failed password for root from 203.0.113.66 port 51015 ssh2
+Oct 26 10:01:29 ubuntu-web01 sshd[2301]: Failed password for root from 203.0.113.66 port 51018 ssh2
+Oct 26 10:01:35 ubuntu-web01 sshd[2301]: Accepted password for root from 203.0.113.66 port 51020 ssh2
+Oct 26 10:01:40 ubuntu-web01 useradd[2410]: new user: name=backdoor, UID=1050, GID=1050, home=/home/backdoor, shell=/bin/bash
+Oct 26 10:01:41 ubuntu-web01 usermod[2412]: add 'backdoor' to group 'sudo'
+Oct 26 10:02:05 ubuntu-web01 sudo:  guest : user NOT in sudoers ; TTY=pts/1 ; PWD=/home/guest ; USER=root ; COMMAND=/bin/bash
+Oct 26 10:03:00 ubuntu-web01 sshd[2450]: Invalid user oracle from 198.51.100.23 port 40022
+Oct 26 10:03:02 ubuntu-web01 sshd[2451]: Invalid user postgres from 198.51.100.23 port 40026
+Oct 26 10:03:05 ubuntu-web01 sshd[2452]: Invalid user test from 198.51.100.23 port 40030
+Oct 26 10:05:00 ubuntu-web01 CRON[2500]: (root) CMD (/usr/bin/certbot renew --quiet)

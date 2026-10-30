@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Agentic SOC{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><i class="bi bi-speedometer2"></i> Dashboard giám sát an ninh</h4>
+  <div class="small text-muted" id="dash-updated">Cập nhật: {{ stats.generated_at|localtime }}</div>
+</div>
+<div class="row g-3 mb-3">
+  <div class="col-md-3"><div class="card kpi-card p-3">
+    <div class="kpi-label"><i class="bi bi-journal-text"></i> Sự kiện 24 giờ</div>
+    <div class="kpi-value text-primary" id="kpi-events-24h">{{ "{:,}".format(stats.kpi.events_24h) }}</div>
+    <div class="small text-muted" id="kpi-events-total">Tổng: {{ "{:,}".format(stats.kpi.events_total) }}</div></div></div>
+  <div class="col-md-3"><div class="card kpi-card p-3">
+    <div class="kpi-label"><i class="bi bi-exclamation-triangle"></i> Cảnh báo đang mở</div>
+    <div class="kpi-value text-danger" id="kpi-alerts-open">{{ stats.kpi.alerts_open }}</div>
+    <div class="small text-muted" id="kpi-alerts-critical">{{ stats.kpi.alerts_critical_open }} mức cao/nghiêm trọng</div></div></div>
+  <div class="col-md-3"><div class="card kpi-card p-3">
+    <div class="kpi-label"><i class="bi bi-hdd-network"></i> Máy trạm trực tuyến</div>
+    <div class="kpi-value text-success" id="kpi-agents">{{ stats.kpi.agents_online }}/{{ stats.kpi.agents_total }}</div>
+    <div class="small text-muted">agent đang gửi log</div></div></div>
+  <div class="col-md-3"><div class="card kpi-card p-3">
+    <div class="kpi-label"><i class="bi bi-robot"></i> Cảnh báo AI đã phân loại</div>
+    <div class="kpi-value text-info" id="kpi-ai">{{ stats.kpi.ai_triaged }}</div>
+    <div class="small text-muted" id="kpi-ai-runs">{{ stats.kpi.ai_runs }} lượt tác tử</div></div></div>
+</div>
+<div class="row g-3 mb-3">
+  <div class="col-lg-8"><div class="card h-100"><div class="card-header">Số sự kiện theo giờ (24 giờ qua)</div>
+    <div class="card-body chart-box"><canvas id="chartEventsHour"></canvas></div></div></div>
+  <div class="col-lg-4"><div class="card h-100"><div class="card-header">Sự kiện theo mức độ (24h)</div>
+    <div class="card-body chart-box"><canvas id="chartSeverity"></canvas></div></div></div>
+</div>
+<div class="row g-3 mb-3">
+  <div class="col-lg-6"><div class="card h-100"><div class="card-header">Cảnh báo theo ngày và mức độ (7 ngày)</div>
+    <div class="card-body chart-box"><canvas id="chartAlertsDay"></canvas></div></div></div>
+  <div class="col-lg-6"><div class="card h-100"><div class="card-header">Nguồn log hàng đầu (24h)</div>
+    <div class="card-body chart-box"><canvas id="chartSources"></canvas></div></div></div>
+</div>
+<div class="row g-3 mb-3">
+  <div class="col-lg-8"><div class="card h-100">
+    <div class="card-header d-flex justify-content-between"><span>Cảnh báo mới nhất</span><a class="small" href="{{ url_for('main.alerts') }}">Xem tất cả</a></div>
+    <div class="table-responsive"><table class="table table-sm table-hover mb-0">
+      <thead class="table-light"><tr><th>Thời gian</th><th>Tiêu đề</th><th>Mức</th><th>Trạng thái</th><th>Ưu tiên AI</th><th>Máy</th></tr></thead>
+      <tbody id="tbl-latest-alerts">
+      {% for a in stats.latest_alerts %}<tr><td>{{ a.created_at|localtime }}</td><td><a href="{{ url_for('main.alert_detail', alert_id=a.id) }}">{{ a.title }}</a></td>
+        <td><span class="badge sev-{{ a.severity }}">{{ a.severity|sev_label }}</span></td><td><span class="badge status-{{ a.status }}">{{ a.status|status_label }}</span></td>
+        <td>{{ 'P%d' % a.ai_priority if a.ai_priority else '-' }}</td><td>{{ a.host or '-' }}</td></tr>
+      {% else %}<tr><td colspan="6" class="text-center text-muted">Chưa có cảnh báo</td></tr>{% endfor %}
+      </tbody></table></div></div></div>
+  <div class="col-lg-4">
+    <div class="card mb-3"><div class="card-header">IP nguồn thất bại nhiều nhất (24h)</div>
+      <table class="table table-sm mb-0"><tbody id="tbl-top-ips">
+      {% for r in stats.top_src_ips %}<tr><td class="mono">{{ r.key }}</td><td class="text-end">{{ r.count }}</td></tr>{% else %}<tr><td class="text-muted text-center">Chưa có dữ liệu</td></tr>{% endfor %}
+      </tbody></table></div>
+    <div class="card"><div class="card-header">Tài khoản bị thử nhiều nhất (24h)</div>
+      <table class="table table-sm mb-0"><tbody id="tbl-top-users">
+      {% for r in stats.top_failed_users %}<tr><td>{{ r.key }}</td><td class="text-end">{{ r.count }}</td></tr>{% else %}<tr><td class="text-muted text-center">Chưa có dữ liệu</td></tr>{% endfor %}
+      </tbody></table></div>
+  </div>
+</div>
+<div class="row g-3">
+  <div class="col-lg-8"><div class="card">
+    <div class="card-header d-flex justify-content-between"><span>Trạng thái máy trạm</span><a class="small" href="{{ url_for('main.agents') }}">Quản lý</a></div>
+    <div class="table-responsive"><table class="table table-sm table-hover mb-0">
+      <thead class="table-light"><tr><th>Máy</th><th>HĐH</th><th>IP</th><th>Sự kiện</th><th>Lần cuối</th></tr></thead>
+      <tbody id="tbl-agents">
+      {% for a in stats.agents %}<tr><td><span class="status-dot {{ a.status }}"></span><a href="{{ url_for('main.agent_detail', agent_id=a.id) }}">{{ a.hostname }}</a></td>
+        <td>{{ a.os_type }}</td><td class="mono">{{ a.ip_address }}</td><td>{{ a.events_count }}</td><td>{{ a.last_seen|localtime }}</td></tr>
+      {% else %}<tr><td colspan="5" class="text-center text-muted">Chưa có máy trạm nào đăng ký</td></tr>{% endfor %}
+      </tbody></table></div></div></div>
+  <div class="col-lg-4"><div class="card"><div class="card-header">Máy trạm nhiều sự kiện nhất (24h)</div>
+    <table class="table table-sm mb-0"><tbody id="tbl-top-hosts">
+    {% for r in stats.top_hosts %}<tr><td>{{ r.key }}</td><td class="text-end">{{ r.count }}</td></tr>{% else %}<tr><td class="text-muted text-center">Chưa có dữ liệu</td></tr>{% endfor %}
+    </tbody></table></div></div>
+</div>
+{% endblock %}

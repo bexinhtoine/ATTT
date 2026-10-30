@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Thêm người dùng' if is_new else 'Sửa người dùng' }}{% endblock %}
+{% block content %}
+<h4 class="mb-3"><i class="bi bi-person"></i> {{ 'Thêm người dùng' if is_new else 'Sửa người dùng ' + user.username }}</h4>
+<form method="post" class="card" style="max-width: 640px;">{{ csrf_field() }}<div class="card-body row g-3">
+  <div class="col-md-6"><label class="form-label">Tên đăng nhập *</label><input class="form-control" name="username" value="{{ user.username or '' }}" required></div>
+  <div class="col-md-6"><label class="form-label">Họ tên</label><input class="form-control" name="full_name" value="{{ user.full_name or '' }}"></div>
+  <div class="col-md-6"><label class="form-label">Email</label><input class="form-control" type="email" name="email" value="{{ user.email or '' }}"></div>
+  <div class="col-md-3"><label class="form-label">Vai trò</label><select class="form-select" name="role">{% for r in roles %}<option value="{{ r }}" {{ 'selected' if user.role == r }}>{{ r|role_label }}</option>{% endfor %}</select></div>
+  <div class="col-md-3"><label class="form-label">Trạng thái</label><select class="form-select" name="is_active"><option value="1" {{ 'selected' if user.is_active }}>Hoạt động</option><option value="0" {{ 'selected' if not user.is_active }}>Khóa</option></select></div>
+  <div class="col-12"><label class="form-label">{{ 'Mật khẩu *' if is_new else 'Mật khẩu mới (để trống nếu không đổi)' }}</label><input class="form-control" type="password" name="password" {{ 'required' if is_new }} minlength="8" autocomplete="new-password"></div>
+  <div class="col-12"><button class="btn btn-primary"><i class="bi bi-save"></i> Lưu</button> <a class="btn btn-outline-secondary" href="{{ url_for('main.users') }}">Hủy</a></div>
+</div></form>
+{% endblock %}

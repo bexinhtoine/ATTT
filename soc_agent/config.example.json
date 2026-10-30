@@ -1,0 +1,24 @@
+{
+  "server": "http://127.0.0.1:5000",
+  "enrollment_token": "soc-enroll-2026",
+  "hostname": null,
+  "interval_seconds": 10,
+  "heartbeat_seconds": 60,
+  "batch_size": 500,
+  "max_queue": 50000,
+  "verify_tls": true,
+  "_comment_follow_server_config": "true = áp dụng chu kỳ/heartbeat/kích thước lô do Web SOC gửi xuống (quản lý tập trung); false = chỉ dùng giá trị trong tệp này.",
+  "follow_server_config": false,
+  "_comment_collectors": "Để trống trường 'collectors' để agent tự chọn mặc định theo HĐH. Ví dụ cấu hình thủ công bên dưới (bỏ dấu _ ở đầu để dùng).",
+  "_collectors": [
+    {"type": "winevt", "name": "windows-security", "channel": "Security",
+     "event_ids": [4624, 4625, 4672, 4688, 4720, 4724, 4732, 4740, 1102]},
+    {"type": "winevt", "name": "windows-system", "channel": "System",
+     "event_ids": [7045, 7034, 104, 6008]},
+    {"type": "file", "name": "nginx-access", "path": "/var/log/nginx/access.log",
+     "format": "access_log", "source": "web.access"},
+    {"type": "file", "name": "linux-auth", "path": "/var/log/auth.log",
+     "format": "syslog", "source": "linux.auth"},
+    {"type": "journald", "name": "journald", "units": ["sshd.service", "sudo"]}
+  ]
+}

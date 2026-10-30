@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Máy trạm - Agentic SOC{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><i class="bi bi-hdd-network"></i> Máy trạm gửi log (Agent)</h4>
+  <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#enrollModal"><i class="bi bi-plus-circle"></i> Thêm máy trạm</button>
+</div>
+<div class="card">
+  <div class="table-responsive"><table class="table table-hover table-sm mb-0">
+    <thead class="table-light"><tr><th>Trạng thái</th><th>Hostname</th><th>Hệ điều hành</th><th>Địa chỉ IP</th><th>Phiên bản agent</th><th>Bộ thu thập</th><th class="text-end">Sự kiện</th><th>Đăng ký</th><th>Lần cuối</th></tr></thead>
+    <tbody>
+    {% for a in agents %}
+    <tr>
+      <td><span class="status-dot {{ a.status }}"></span>{{ {'online': 'Trực tuyến', 'offline': 'Ngoại tuyến', 'pending': 'Chờ'}[a.status] }}</td>
+      <td><a href="{{ url_for('main.agent_detail', agent_id=a.id) }}"><strong>{{ a.hostname }}</strong></a></td>
+      <td><i class="bi bi-{{ 'windows' if a.os_type == 'windows' else 'ubuntu' if a.os_type == 'linux' else 'pc' }}"></i> {{ a.os_version or a.os_type }}</td>
+      <td class="mono">{{ a.ip_address or '-' }}</td><td>{{ a.agent_version or '-' }}</td>
+      <td class="small">{% for c in a.collectors_list %}<span class="badge bg-light text-dark border">{{ c.type if c is mapping else c }}</span> {% endfor %}</td>
+      <td class="text-end">{{ "{:,}".format(a.events_count) }}</td>
+      <td>{{ a.registered_at|localtime }}</td><td>{{ a.last_seen|timeago }}</td>
+    </tr>
+    {% else %}<tr><td colspan="9" class="text-center text-muted py-4">Chưa có máy trạm nào. Bấm "Thêm máy trạm" để xem hướng dẫn cài agent.</td></tr>{% endfor %}
+    </tbody></table></div>
+</div>
+
+<div class="modal fade" id="enrollModal" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content">
+  <div class="modal-header"><h5 class="modal-title">Cài đặt SOC Agent trên máy trạm</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+  <div class="modal-body small">
+    <p>Sao chép thư mục <code>soc_agent/</code> sang máy cần giám sát, tạo tệp <code>config.json</code> rồi chạy. Agent sẽ tự đăng ký bằng <strong>enrollment token</strong> và nhận API key riêng.</p>
+    <p><strong>Enrollment token:</strong> <code>{{ enrollment_token }}</code> &nbsp; <strong>Server URL:</strong> <code>{{ server_url }}</code></p>
+    <p class="mb-1"><strong>Windows (PowerShell, chạy với quyền Administrator để đọc Security log):</strong></p>
+<pre class="raw">cd soc_agent
+python agent.py --server {{ server_url }} --token {{ enrollment_token }} --register
+python agent.py            # chạy liên tục; hoặc cài thành dịch vụ: install\install_windows_task.ps1</pre>
+    <p class="mb-1"><strong>Linux (Ubuntu/Debian/CentOS):</strong></p>
+<pre class="raw">cd soc_agent
+sudo python3 agent.py --server {{ server_url }} --token {{ enrollment_token }} --register
+sudo python3 agent.py      # hoặc: sudo cp install/soc-agent.service /etc/systemd/system/ &amp;&amp; sudo systemctl enable --now soc-agent</pre>
+    <p class="mb-0">Mặc định agent thu thập: Windows (Security, System, Application) · Linux (/var/log/auth.log hoặc /var/log/secure, /var/log/syslog hoặc /var/log/messages, journald). Có thể thêm tệp log tùy ý (Nginx/Apache access log...) trong <code>config.json</code>.</p>
+  </div>
+</div></div></div>
+{% endblock %}

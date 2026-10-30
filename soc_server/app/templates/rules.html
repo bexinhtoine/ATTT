@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Luật phát hiện - Agentic SOC{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><i class="bi bi-funnel"></i> Luật phát hiện ({{ rules|length }})</h4>
+  <div class="d-flex gap-2">
+    {% if current_user.role in ('admin', 'analyst') %}
+    <form method="post" action="{{ url_for('main.rules_replay') }}" class="d-flex gap-1" data-confirm="Chạy lại toàn bộ luật trên dữ liệu lịch sử?">{{ csrf_field() }}
+      <select class="form-select form-select-sm" name="hours" style="width: auto"><option value="1">1 giờ</option><option value="24" selected>24 giờ</option><option value="168">7 ngày</option></select>
+      <button class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-clockwise"></i> Chạy lại luật</button></form>
+    <a class="btn btn-primary btn-sm" href="{{ url_for('main.rule_new') }}"><i class="bi bi-plus-circle"></i> Thêm luật</a>
+    {% endif %}
+  </div>
+</div>
+<div class="card"><div class="table-responsive"><table class="table table-sm table-hover mb-0">
+  <thead class="table-light"><tr><th>Mã</th><th>Tên luật</th><th>Loại</th><th>Mức</th><th>Điều kiện</th><th>Ngưỡng / cửa sổ</th><th>MITRE</th><th class="text-end">Kích hoạt</th><th>Bật</th><th></th></tr></thead>
+  <tbody>
+  {% for r in rules %}
+  <tr class="{{ 'table-light text-muted' if not r.enabled }}">
+    <td><strong>{{ r.code }}</strong></td>
+    <td>{{ r.name }}<br><span class="small text-muted">{{ r.description }}</span></td>
+    <td><span class="badge bg-light text-dark border">{{ r.rule_type|rule_type_label }}</span></td>
+    <td><span class="badge sev-{{ r.severity }}">{{ r.severity|sev_label }}</span></td>
+    <td><code class="small">{{ r.conditions[:120] }}{{ '…' if r.conditions|length > 120 }}</code></td>
+    <td class="small">{% if r.rule_type == 'threshold' %}≥ {{ r.threshold_count }}{{ ' giá trị ' + r.distinct_field if r.distinct_field else ' sự kiện' }} / {{ r.window_seconds }}s theo {{ r.group_by }}{% elif r.rule_type == 'sequence' %}≥ {{ r.conditions_dict.get('min_count', 3) }} tiền đề / {{ r.window_seconds }}s theo {{ r.group_by }}{% else %}1 sự kiện{% endif %}</td>
+    <td class="small">{{ r.mitre_tactic or '' }}<br>{{ r.mitre_technique or '' }}</td>
+    <td class="text-end">{{ r.hits or 0 }}</td>
+    <td>{% if current_user.role in ('admin', 'analyst') %}<form method="post" action="{{ url_for('main.rule_toggle', rule_id=r.id) }}">{{ csrf_field() }}<button class="btn btn-sm {{ 'btn-success' if r.enabled else 'btn-outline-secondary' }}" title="Bật/tắt"><i class="bi bi-{{ 'toggle-on' if r.enabled else 'toggle-off' }}"></i></button></form>{% else %}{{ 'Bật' if r.enabled else 'Tắt' }}{% endif %}</td>
+    <td class="text-nowrap">{% if current_user.role in ('admin', 'analyst') %}<a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.rule_edit', rule_id=r.id) }}"><i class="bi bi-pencil"></i></a>{% endif %}
+      {% if current_user.role == 'admin' %}<form class="d-inline" method="post" action="{{ url_for('main.rule_delete', rule_id=r.id) }}" data-confirm="Xóa luật {{ r.code }}?">{{ csrf_field() }}<button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>{% endif %}</td>
+  </tr>
+  {% endfor %}
+  </tbody></table></div></div>
+{% endblock %}

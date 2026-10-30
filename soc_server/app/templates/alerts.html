@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% from "base.html" import pager %}
+{% block title %}Cảnh báo - Agentic SOC{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><i class="bi bi-exclamation-triangle"></i> Cảnh báo an ninh</h4>
+  <a class="btn btn-outline-success btn-sm" href="{{ url_for('main.alerts_export') }}"><i class="bi bi-filetype-csv"></i> Xuất CSV</a>
+</div>
+<ul class="nav nav-pills mb-3 small">
+  <li class="nav-item"><a class="nav-link {{ 'active' if args.get('open') == '1' and not args.get('status') }}" href="{{ url_for('main.alerts', open=1) }}">Đang mở ({{ (status_counts.get('new', 0) + status_counts.get('triaged', 0) + status_counts.get('investigating', 0)) }})</a></li>
+  {% for s in statuses %}<li class="nav-item"><a class="nav-link {{ 'active' if args.get('status') == s }}" href="{{ url_for('main.alerts', status=s) }}">{{ s|status_label }} ({{ status_counts.get(s, 0) }})</a></li>{% endfor %}
+  <li class="nav-item"><a class="nav-link {{ 'active' if not args.get('open') and not args.get('status') }}" href="{{ url_for('main.alerts') }}">Tất cả</a></li>
+</ul>
+<div class="card mb-3"><div class="card-body py-3">
+  <form class="row g-2 align-items-end" method="get">
+    <input type="hidden" name="status" value="{{ args.get('status', '') }}"><input type="hidden" name="open" value="{{ args.get('open', '') }}">
+    <div class="col-md-2"><label class="form-label small mb-0">Mức độ</label><select class="form-select form-select-sm" name="severity"><option value="">Tất cả</option>{% for s in severities %}<option value="{{ s }}" {{ 'selected' if args.get('severity') == s }}>{{ s|sev_label }}</option>{% endfor %}</select></div>
+    <div class="col-md-2"><label class="form-label small mb-0">Máy</label><select class="form-select form-select-sm" name="host"><option value="">Tất cả</option>{% for h in hosts %}<option value="{{ h }}" {{ 'selected' if args.get('host') == h }}>{{ h }}</option>{% endfor %}</select></div>
+    <div class="col-md-3"><label class="form-label small mb-0">Luật</label><select class="form-select form-select-sm" name="rule_id"><option value="">Tất cả</option>{% for r in rules %}<option value="{{ r.id }}" {{ 'selected' if args.get('rule_id') == r.id|string }}>{{ r.code }} - {{ r.name }}</option>{% endfor %}</select></div>
+    <div class="col-md-2"><label class="form-label small mb-0">Kết luận AI</label><select class="form-select form-select-sm" name="verdict"><option value="">Tất cả</option>{% for v in ['true_positive', 'likely_true_positive', 'suspicious', 'likely_false_positive', 'false_positive'] %}<option value="{{ v }}" {{ 'selected' if args.get('verdict') == v }}>{{ v|verdict_label }}</option>{% endfor %}</select></div>
+    <div class="col-md-2"><label class="form-label small mb-0">Sắp xếp</label><select class="form-select form-select-sm" name="sort"><option value="created" {{ 'selected' if args.get('sort') == 'created' }}>Mới nhất</option><option value="priority" {{ 'selected' if args.get('sort') == 'priority' }}>Ưu tiên AI</option><option value="severity" {{ 'selected' if args.get('sort') == 'severity' }}>Mức độ</option></select></div>
+    <div class="col-md-1"><button class="btn btn-primary btn-sm w-100"><i class="bi bi-search"></i></button></div>
+    <div class="col-md-4"><input class="form-control form-control-sm" name="q" value="{{ args.get('q', '') }}" placeholder="Tìm theo tiêu đề, IP, tài khoản..."></div>
+  </form>
+</div></div>
+<div class="card">
+  <div class="table-responsive"><table class="table table-sm table-hover mb-0">
+    <thead class="table-light"><tr><th>#</th><th>Thời gian</th><th>Tiêu đề</th><th>Mức</th><th>Trạng thái</th><th>Ưu tiên</th><th>Kết luận AI</th><th>Máy</th><th>IP nguồn</th><th>Tài khoản</th><th class="text-end">Sự kiện</th><th>Phụ trách</th></tr></thead>
+    <tbody>
+    {% for a in alerts %}
+    <tr>
+      <td>{{ a.id }}</td><td class="text-nowrap">{{ a.created_at|localtime }}</td>
+      <td><a href="{{ url_for('main.alert_detail', alert_id=a.id) }}">{{ a.title }}</a>{% if a.mitre_technique %}<br><span class="text-muted small">{{ a.mitre_tactic }} · {{ a.mitre_technique }}</span>{% endif %}</td>
+      <td><span class="badge sev-{{ a.severity }}">{{ a.severity|sev_label }}</span></td>
+      <td><span class="badge status-{{ a.status }}">{{ a.status|status_label }}</span></td>
+      <td>{% if a.ai_priority %}<span class="badge {{ 'bg-danger' if a.ai_priority <= 2 else 'bg-warning text-dark' if a.ai_priority == 3 else 'bg-secondary' }}">P{{ a.ai_priority }}</span>{% else %}-{% endif %}</td>
+      <td>{% if a.ai_verdict %}<span class="badge {{ a.ai_verdict|verdict_class }}">{{ a.ai_verdict|verdict_label }}</span> <span class="small text-muted">{{ (a.ai_confidence * 100)|round|int }}%</span>{% else %}<span class="text-muted small">chưa</span>{% endif %}</td>
+      <td>{{ a.host or '-' }}</td><td class="mono">{{ a.src_ip or '-' }}</td><td>{{ a.user_name or '-' }}</td><td class="text-end">{{ a.event_count }}</td>
+      <td>{{ a.assignee.username if a.assignee else '-' }}</td>
+    </tr>
+    {% else %}<tr><td colspan="12" class="text-center text-muted py-4">Không có cảnh báo phù hợp.</td></tr>{% endfor %}
+    </tbody></table></div>
+  <div class="card-body py-2">{{ pager(pagination, 'main.alerts') }}</div>
+</div>
+{% endblock %}

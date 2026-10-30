@@ -1,0 +1,17 @@
+[Unit]
+Description=Agentic SOC Platform - SOC Agent (thu thap log gui ve Web SOC)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Sua duong dan cho dung voi vi tri cai dat agent
+WorkingDirectory=/opt/soc_agent
+ExecStart=/usr/bin/python3 /opt/soc_agent/agent.py
+Restart=always
+RestartSec=10
+# Agent can quyen doc /var/log/auth.log, /var/log/secure... nen chay bang root
+User=root
+
+[Install]
+WantedBy=multi-user.target

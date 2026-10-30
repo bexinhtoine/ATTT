@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Uy tín IP - Agentic SOC{% endblock %}
+{% block content %}
+<h4 class="mb-3"><i class="bi bi-globe2"></i> Danh sách uy tín IP (dùng cho làm giàu dữ liệu)</h4>
+<div class="row g-3">
+  <div class="col-lg-8"><div class="card"><div class="table-responsive"><table class="table table-sm table-hover mb-0">
+    <thead class="table-light"><tr><th>IP</th><th>Kết luận</th><th>Nguồn</th><th>Ghi chú</th><th>Người tạo</th><th>Thời gian</th><th></th></tr></thead><tbody>
+    {% for r in rows %}<tr><td class="mono"><a href="{{ url_for('main.logs', src_ip=r.ip) }}">{{ r.ip }}</a></td><td><span class="badge {{ 'bg-danger' if r.verdict == 'malicious' else 'bg-warning text-dark' if r.verdict == 'suspicious' else 'bg-success' }}">{{ r.verdict }}</span></td><td>{{ r.source }}</td><td class="small">{{ r.note }}</td><td>{{ r.created_by }}</td><td>{{ r.created_at|localtime }}</td>
+      <td>{% if current_user.role in ('admin', 'analyst') %}<form method="post" action="{{ url_for('main.ip_reputation_delete', rec_id=r.id) }}" data-confirm="Xóa mục này?">{{ csrf_field() }}<button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>{% endif %}</td></tr>
+    {% else %}<tr><td colspan="7" class="text-muted text-center">Chưa có mục nào</td></tr>{% endfor %}</tbody></table></div></div></div>
+  {% if current_user.role in ('admin', 'analyst') %}
+  <div class="col-lg-4"><div class="card"><div class="card-header">Thêm / cập nhật IP</div><div class="card-body">
+    <form method="post">{{ csrf_field() }}
+      <div class="mb-2"><label class="form-label small mb-0">Địa chỉ IP</label><input class="form-control form-control-sm" name="ip" required></div>
+      <div class="mb-2"><label class="form-label small mb-0">Kết luận</label><select class="form-select form-select-sm" name="verdict"><option value="malicious">malicious (độc hại)</option><option value="suspicious" selected>suspicious (đáng ngờ)</option><option value="clean">clean (an toàn / allowlist)</option></select></div>
+      <div class="mb-2"><label class="form-label small mb-0">Ghi chú</label><input class="form-control form-control-sm" name="note"></div>
+      <button class="btn btn-primary btn-sm w-100"><i class="bi bi-plus-circle"></i> Lưu</button>
+    </form></div></div></div>
+  {% endif %}
+</div>
+{% endblock %}

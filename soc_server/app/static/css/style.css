@@ -1,0 +1,30 @@
+:root { --soc-sidebar: #0f172a; --soc-accent: #38bdf8; }
+body { background: #f1f5f9; font-size: 0.925rem; }
+.sidebar { background: var(--soc-sidebar); min-height: 100vh; color: #cbd5e1; position: sticky; top: 0; }
+.sidebar .brand { color: #fff; font-weight: 700; letter-spacing: .3px; }
+.sidebar .brand small { color: var(--soc-accent); }
+.sidebar .nav-link { color: #cbd5e1; border-radius: .5rem; padding: .5rem .75rem; }
+.sidebar .nav-link:hover { background: rgba(255,255,255,.08); color: #fff; }
+.sidebar .nav-link.active { background: rgba(56,189,248,.18); color: #fff; }
+.sidebar .nav-link i { width: 1.4rem; }
+.kpi-card { border: 0; border-radius: .75rem; box-shadow: 0 1px 3px rgba(15,23,42,.08); }
+.kpi-card .kpi-value { font-size: 1.9rem; font-weight: 700; line-height: 1.1; }
+.kpi-card .kpi-label { color: #64748b; font-size: .8rem; text-transform: uppercase; letter-spacing: .4px; }
+.card { border: 0; border-radius: .75rem; box-shadow: 0 1px 3px rgba(15,23,42,.08); }
+.card-header { background: #fff; border-bottom: 1px solid #e2e8f0; font-weight: 600; border-radius: .75rem .75rem 0 0 !important; }
+.table-sm td, .table-sm th { padding: .35rem .5rem; vertical-align: middle; }
+.table-hover tbody tr { cursor: default; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .82rem; }
+.msg-cell { max-width: 520px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+pre.raw { background: #0f172a; color: #e2e8f0; padding: .75rem 1rem; border-radius: .5rem; font-size: .8rem; white-space: pre-wrap; word-break: break-all; }
+.badge { font-weight: 600; }
+.ai-panel { border-left: 4px solid var(--soc-accent); }
+.timeline { border-left: 2px solid #cbd5e1; margin-left: .5rem; padding-left: 1rem; }
+.timeline-item { position: relative; margin-bottom: .75rem; }
+.timeline-item::before { content: ""; position: absolute; left: -1.42rem; top: .35rem; width: .7rem; height: .7rem; border-radius: 50%; background: var(--soc-accent); }
+.status-dot { display: inline-block; width: .6rem; height: .6rem; border-radius: 50%; margin-right: .3rem; }
+.status-dot.online { background: #22c55e; } .status-dot.offline { background: #ef4444; } .status-dot.pending { background: #f59e0b; }
+.login-bg { background: linear-gradient(135deg, #0f172a, #1e3a8a); min-height: 100vh; }
+.chart-box { position: relative; height: 260px; }
+.flag-list li { margin-bottom: .25rem; }
+@media print { .sidebar, .no-print { display: none !important; } body { background: #fff; } .card { box-shadow: none; border: 1px solid #ddd; } }

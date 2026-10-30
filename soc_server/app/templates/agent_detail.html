@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}{{ agent.hostname }} - Máy trạm{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><span class="status-dot {{ agent.status }}"></span>{{ agent.hostname }} <small class="text-muted fs-6">{{ agent.os_version or agent.os_type }}</small></h4>
+  <div>
+    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.logs', host=agent.hostname) }}"><i class="bi bi-journal-text"></i> Xem toàn bộ log</a>
+    {% if current_user.role == 'admin' %}
+    <form class="d-inline" method="post" action="{{ url_for('main.agent_rekey', agent_id=agent.id) }}" data-confirm="Cấp lại API key? Agent hiện tại sẽ phải đăng ký lại.">{{ csrf_field() }}<button class="btn btn-outline-warning btn-sm"><i class="bi bi-key"></i> Cấp lại API key</button></form>
+    <form class="d-inline" method="post" action="{{ url_for('main.agent_delete', agent_id=agent.id) }}" data-confirm="Xóa máy trạm này?">{{ csrf_field() }}<button class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i> Xóa</button></form>
+    {% endif %}
+  </div>
+</div>
+<div class="row g-3 mb-3">
+  <div class="col-lg-4"><div class="card h-100"><div class="card-header">Thông tin</div>
+    <table class="table table-sm mb-0"><tbody>
+      <tr><th>Agent UID</th><td class="mono">{{ agent.agent_uid }}</td></tr>
+      <tr><th>Địa chỉ IP</th><td class="mono">{{ agent.ip_address or '-' }}</td></tr>
+      <tr><th>Phiên bản</th><td>{{ agent.agent_version or '-' }}</td></tr>
+      <tr><th>API key</th><td class="mono">{{ agent.api_key_prefix }}…</td></tr>
+      <tr><th>Đăng ký</th><td>{{ agent.registered_at|localtime }}</td></tr>
+      <tr><th>Lần cuối</th><td>{{ agent.last_seen|localtime }} ({{ agent.last_seen|timeago }})</td></tr>
+      <tr><th>Tổng sự kiện</th><td>{{ "{:,}".format(agent.events_count) }}</td></tr>
+    </tbody></table></div></div>
+  <div class="col-lg-4"><div class="card h-100"><div class="card-header">Số liệu hệ thống (heartbeat)</div>
+    <div class="card-body">
+    {% set m = agent.metrics_dict %}
+    {% if m %}
+      {% for k in ['cpu_percent', 'memory_percent', 'disk_percent'] if k in m %}
+      <div class="mb-2"><div class="d-flex justify-content-between small"><span>{{ {'cpu_percent': 'CPU', 'memory_percent': 'RAM', 'disk_percent': 'Đĩa'}[k] }}</span><span>{{ m[k] }}%</span></div>
+        <div class="progress" style="height: 8px;"><div class="progress-bar {{ 'bg-danger' if m[k] > 85 else 'bg-success' }}" style="width: {{ m[k] }}%"></div></div></div>
+      {% endfor %}
+      <div class="small text-muted">Uptime: {{ m.get('uptime_hours', '-') }} giờ · Load: {{ m.get('load_avg', '-') }} · Hàng đợi agent: {{ m.get('queue_size', 0) }}</div>
+    {% else %}<div class="text-muted">Chưa nhận được heartbeat.</div>{% endif %}
+    </div></div></div>
+  <div class="col-lg-4"><div class="card h-100"><div class="card-header">Bộ thu thập & phân bố 24h</div>
+    <div class="card-body small">
+      <div class="mb-2">{% for c in agent.collectors_list %}<span class="badge bg-light text-dark border">{{ c.type if c is mapping else c }}{% if c is mapping and c.get('path') %}: {{ c.path }}{% endif %}{% if c is mapping and c.get('channels') %}: {{ c.channels|join(', ') }}{% endif %}</span> {% endfor %}</div>
+      <table class="table table-sm mb-2"><tbody>{% for s, n in by_source %}<tr><td>{{ s }}</td><td class="text-end">{{ n }}</td></tr>{% endfor %}</tbody></table>
+      {% for s, n in by_sev %}<span class="badge sev-{{ s }}">{{ s|sev_label }}: {{ n }}</span> {% endfor %}
+    </div></div></div>
+</div>
+<div class="card mb-3"><div class="card-header">Cảnh báo gần đây của máy này</div>
+  <div class="table-responsive"><table class="table table-sm table-hover mb-0"><thead class="table-light"><tr><th>Thời gian</th><th>Tiêu đề</th><th>Mức</th><th>Trạng thái</th><th>AI</th></tr></thead><tbody>
+  {% for a in alerts %}<tr><td>{{ a.created_at|localtime }}</td><td><a href="{{ url_for('main.alert_detail', alert_id=a.id) }}">{{ a.title }}</a></td><td><span class="badge sev-{{ a.severity }}">{{ a.severity|sev_label }}</span></td><td><span class="badge status-{{ a.status }}">{{ a.status|status_label }}</span></td><td>{% if a.ai_verdict %}<span class="badge {{ a.ai_verdict|verdict_class }}">{{ a.ai_verdict|verdict_label }}</span>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="5" class="text-muted text-center">Không có cảnh báo</td></tr>{% endfor %}</tbody></table></div></div>
+<div class="card"><div class="card-header">50 sự kiện mới nhất</div>
+  <div class="table-responsive"><table class="table table-sm table-hover mb-0"><thead class="table-light"><tr><th>Thời gian</th><th>Nguồn</th><th>Mức</th><th>Hành động</th><th>Tài khoản</th><th>IP nguồn</th><th>Thông điệp</th></tr></thead><tbody>
+  {% for e in events %}<tr><td class="text-nowrap"><a href="{{ url_for('main.log_detail', event_id=e.id) }}">{{ e.event_time|localtime }}</a></td><td>{{ e.source }}</td><td><span class="badge sev-{{ e.severity }}">{{ e.severity|sev_label }}</span></td><td>{{ e.action }}</td><td>{{ e.user_name or '-' }}</td><td class="mono">{{ e.src_ip or '-' }}</td><td class="msg-cell" title="{{ e.message }}">{{ e.message }}</td></tr>
+  {% else %}<tr><td colspan="7" class="text-muted text-center">Chưa có sự kiện</td></tr>{% endfor %}</tbody></table></div></div>
+{% endblock %}

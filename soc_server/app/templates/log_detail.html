@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Sự kiện #{{ ev.id }} - Agentic SOC{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><i class="bi bi-file-earmark-text"></i> Sự kiện #{{ ev.id }} <span class="badge sev-{{ ev.severity }}">{{ ev.severity|sev_label }}</span></h4>
+  <a class="btn btn-outline-secondary btn-sm" href="javascript:history.back()"><i class="bi bi-arrow-left"></i> Quay lại</a>
+</div>
+<div class="row g-3">
+  <div class="col-lg-6"><div class="card h-100"><div class="card-header">Trường đã chuẩn hóa</div>
+    <table class="table table-sm mb-0"><tbody>
+      <tr><th style="width: 180px">Thời gian sự kiện</th><td>{{ ev.event_time|localtime }} <span class="text-muted">(UTC: {{ ev.event_time }})</span></td></tr>
+      <tr><th>Thời gian nhận</th><td>{{ ev.received_at|localtime }}</td></tr>
+      <tr><th>Máy trạm</th><td>{% if ev.agent %}<a href="{{ url_for('main.agent_detail', agent_id=ev.agent.id) }}">{{ ev.host }}</a>{% else %}{{ ev.host }}{% endif %}</td></tr>
+      <tr><th>Nguồn</th><td>{{ ev.source }}</td></tr>
+      <tr><th>Phân loại / Hành động</th><td>{{ ev.category }} / <strong>{{ ev.action }}</strong></td></tr>
+      <tr><th>Kết quả</th><td>{{ ev.outcome }}</td></tr>
+      <tr><th>Event ID</th><td class="mono">{{ ev.event_id or '-' }}</td></tr>
+      <tr><th>Tài khoản</th><td>{{ ev.user_name or '-' }}</td></tr>
+      <tr><th>IP nguồn : cổng</th><td class="mono">{{ ev.src_ip or '-' }}{% if ev.src_port %}:{{ ev.src_port }}{% endif %}</td></tr>
+      <tr><th>Tiến trình / PID</th><td>{{ ev.process_name or '-' }} {% if ev.pid %}[{{ ev.pid }}]{% endif %}</td></tr>
+      <tr><th>Thông điệp</th><td>{{ ev.message }}</td></tr>
+    </tbody></table></div></div>
+  <div class="col-lg-6">
+    <div class="card mb-3"><div class="card-header">Trường bổ sung (extra)</div><div class="card-body"><pre class="raw mb-0">{{ ev.extra_dict|pretty_json }}</pre></div></div>
+    <div class="card"><div class="card-header">Cảnh báo liên quan</div><div class="card-body">
+      {% for a in alerts %}<a href="{{ url_for('main.alert_detail', alert_id=a.id) }}" class="d-block"><span class="badge sev-{{ a.severity }}">{{ a.severity|sev_label }}</span> {{ a.title }}</a>{% else %}<span class="text-muted">Sự kiện này chưa gắn với cảnh báo nào.</span>{% endfor %}
+    </div></div>
+  </div>
+</div>
+<div class="card mt-3"><div class="card-header">Dữ liệu gốc (raw)</div><div class="card-body"><pre class="raw mb-0">{{ ev.raw or '(không có)' }}</pre></div></div>
+{% endblock %}

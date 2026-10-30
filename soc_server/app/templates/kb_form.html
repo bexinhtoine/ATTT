@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Thêm bài tri thức' if is_new else 'Sửa bài tri thức' }}{% endblock %}
+{% block content %}
+<h4 class="mb-3"><i class="bi bi-book"></i> {{ 'Thêm bài tri thức' if is_new else 'Sửa bài tri thức' }}</h4>
+<form method="post" class="card">{{ csrf_field() }}<div class="card-body row g-3">
+  <div class="col-md-8"><label class="form-label">Tiêu đề *</label><input class="form-control" name="title" value="{{ art.title or '' }}" required></div>
+  <div class="col-md-2"><label class="form-label">Loại</label><select class="form-select" name="category">{% for c in ['playbook', 'lesson', 'indicator', 'reference'] %}<option value="{{ c }}" {{ 'selected' if art.category == c }}>{{ c }}</option>{% endfor %}</select></div>
+  <div class="col-md-2"><label class="form-label">MITRE</label><input class="form-control" name="mitre_technique" value="{{ art.mitre_technique or '' }}" placeholder="T1110.001"></div>
+  <div class="col-12"><label class="form-label">Thẻ (phân tách bằng dấu phẩy)</label><input class="form-control" name="tags" value="{{ art.tags or '' }}"></div>
+  <div class="col-12"><label class="form-label">Tóm tắt</label><textarea class="form-control" name="summary" rows="2">{{ art.summary or '' }}</textarea></div>
+  <div class="col-12"><label class="form-label">Nội dung (Markdown)</label><textarea class="form-control mono" name="content" rows="16">{{ art.content or '' }}</textarea></div>
+  <div class="col-12"><button class="btn btn-primary"><i class="bi bi-save"></i> Lưu</button> <a class="btn btn-outline-secondary" href="{{ url_for('main.kb') }}">Hủy</a></div>
+</div></form>
+{% endblock %}

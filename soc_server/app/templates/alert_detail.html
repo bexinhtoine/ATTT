@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}Cảnh báo #{{ alert.id }} - Agentic SOC{% endblock %}
+{% block content %}
+{% set tri = ai.get('triage') or {} %}
+{% set en = ai.get('enrichment') or {} %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h4 class="mb-1"><span class="badge sev-{{ alert.severity }}">{{ alert.severity|sev_label }}</span> #{{ alert.id }} {{ alert.title }}</h4>
+    <div class="small text-muted">Tạo lúc {{ alert.created_at|localtime }} · Cập nhật {{ alert.updated_at|timeago }} · Luật {{ alert.rule.code if alert.rule }} {{ alert.rule.name if alert.rule }}
+      {% if alert.mitre_technique %}· <a target="_blank" href="https://attack.mitre.org/techniques/{{ alert.mitre_technique.replace('.', '/') }}/">{{ alert.mitre_tactic }} / {{ alert.mitre_technique }}</a>{% endif %}</div>
+  </div>
+  <div class="text-end">
+    <span class="badge status-{{ alert.status }} fs-6">{{ alert.status|status_label }}</span>
+    {% if alert.ai_priority %}<span class="badge {{ 'bg-danger' if alert.ai_priority <= 2 else 'bg-warning text-dark' if alert.ai_priority == 3 else 'bg-secondary' }} fs-6">Ưu tiên P{{ alert.ai_priority }}</span>{% endif %}
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    <!-- Tóm tắt -->
+    <div class="card mb-3"><div class="card-header">Thông tin cảnh báo</div>
+      <div class="card-body">
+        <p class="mb-2">{{ alert.description }}</p>
+        <div class="row small">
+          <div class="col-md-6"><table class="table table-sm mb-0"><tbody>
+            <tr><th>Máy trạm</th><td>{% if alert.agent %}<a href="{{ url_for('main.agent_detail', agent_id=alert.agent.id) }}">{{ alert.host }}</a>{% else %}{{ alert.host or '-' }}{% endif %}</td></tr>
+            <tr><th>IP nguồn</th><td class="mono">{% if alert.src_ip %}<a href="{{ url_for('main.logs', src_ip=alert.src_ip) }}">{{ alert.src_ip }}</a>{% else %}-{% endif %}</td></tr>
+            <tr><th>Tài khoản</th><td>{{ alert.user_name or '-' }}</td></tr></tbody></table></div>
+          <div class="col-md-6"><table class="table table-sm mb-0"><tbody>
+            <tr><th>Số sự kiện</th><td>{{ alert.event_count }}</td></tr>
+            <tr><th>Sự kiện đầu / cuối</th><td>{{ alert.first_event_time|localtime }} → {{ alert.last_event_time|localtime }}</td></tr>
+            <tr><th>Phụ trách</th><td>{{ alert.assignee.full_name or alert.assignee.username if alert.assignee else 'Chưa gán' }}</td></tr></tbody></table></div>
+        </div>
+      </div></div>
+
+    <!-- AI Triage -->
+    <div class="card mb-3 ai-panel"><div class="card-header d-flex justify-content-between align-items-center">
+      <span><i class="bi bi-robot"></i> Phân loại bởi tác tử AI (Triage Agent)
+        {% if alert.ai_mode %}<span class="badge {{ 'bg-success' if alert.ai_mode == 'llm' else 'bg-secondary' }} ms-1">{{ 'Claude LLM' if alert.ai_mode == 'llm' else 'suy luận cục bộ' }}</span>{% endif %}</span>
+      {% if current_user.role in ('admin', 'analyst') %}
+      <div class="btn-group btn-group-sm">
+        <button class="btn btn-outline-primary" onclick="runAI({{ alert.id }}, 'triage', this)"><i class="bi bi-arrow-repeat"></i> Phân loại lại</button>
+        <button class="btn btn-outline-warning" onclick="runAI({{ alert.id }}, 'investigate', this)"><i class="bi bi-search"></i> Điều tra sâu</button>
+        <button class="btn btn-outline-success" onclick="runAI({{ alert.id }}, 'knowledge', this)"><i class="bi bi-book"></i> Trích xuất tri thức</button>
+      </div>{% endif %}
+    </div>
+      <div class="card-body">
+      {% if tri %}
+        <div class="d-flex flex-wrap gap-2 mb-2">
+          <span class="badge {{ tri.verdict|verdict_class }} fs-6">{{ tri.verdict|verdict_label }}</span>
+          <span class="badge bg-dark fs-6">Điểm rủi ro {{ tri.risk_score }}/100</span>
+          <span class="badge bg-primary fs-6">Ưu tiên P{{ tri.priority }}</span>
+          <span class="badge sev-{{ tri.severity }} fs-6">Mức AI đánh giá: {{ tri.severity|sev_label }}</span>
+          <span class="badge bg-light text-dark border fs-6">Độ tin cậy {{ (tri.confidence * 100)|round|int }}%</span>
+          {% if tri.needs_investigation %}<span class="badge bg-warning text-dark fs-6">Cần điều tra</span>{% endif %}
+        </div>
+        <p class="mb-2"><strong>Tóm tắt:</strong> {{ tri.summary }}</p>
+        {% if tri.reasoning %}<p class="small text-muted mb-2"><strong>Lập luận:</strong> {{ tri.reasoning }}</p>{% endif %}
+        <div class="row">
+          <div class="col-md-6"><strong class="small">Bằng chứng</strong><ul class="small flag-list mb-2">{% for e in tri.evidence %}<li>{{ e }}</li>{% else %}<li class="text-muted">Không có</li>{% endfor %}</ul></div>
+          <div class="col-md-6"><strong class="small">Hành động khuyến nghị</strong><ol class="small mb-2">{% for r in tri.recommended_actions %}<li>{{ r }}</li>{% endfor %}</ol></div>
+        </div>
+        {% if tri.fallback_reason %}<div class="small text-muted"><i class="bi bi-info-circle"></i> Dùng suy luận cục bộ vì: {{ tri.fallback_reason }}</div>{% endif %}
+        <div class="small text-muted">Cập nhật {{ alert.ai_updated_at|localtime }}</div>
+      {% else %}
+        <div class="text-muted">Chưa có kết quả phân loại. {% if current_user.role in ('admin', 'analyst') %}Bấm <em>Phân loại lại</em> để chạy tác tử.{% endif %}</div>
+      {% endif %}
+      </div></div>
+
+    <!-- Investigation -->
+    {% for inv in investigations %}
+    <div class="card mb-3"><div class="card-header"><i class="bi bi-search"></i> Báo cáo điều tra #{{ inv.id }} <span class="badge {{ 'bg-success' if inv.mode == 'llm' else 'bg-secondary' }}">{{ 'Claude LLM' if inv.mode == 'llm' else 'cục bộ' }}</span> <span class="small text-muted">{{ inv.created_at|localtime }} · {{ inv.created_by }}</span></div>
+      <div class="card-body small">
+        <p><strong>Giả thuyết:</strong> {{ inv.hypothesis }}</p>
+        <p><strong>Tóm tắt:</strong> {{ inv.summary }}</p>
+        <div class="row">
+          <div class="col-md-6"><strong>Chuỗi tấn công (MITRE ATT&CK)</strong>
+            <ol class="mb-2">{% for c in inv.attack_chain_list %}<li><strong>{{ c.tactic }}</strong> – {{ c.technique }}<br><span class="text-muted">{{ c.evidence }}</span></li>{% else %}<li class="text-muted">Chưa xác định</li>{% endfor %}</ol>
+            <strong>Tác động:</strong> {{ inv.impact }}<br><strong>Nguyên nhân gốc:</strong> {{ inv.root_cause }}</div>
+          <div class="col-md-6"><strong>IOC</strong>
+            {% set io = inv.iocs_dict %}
+            <div>IP: {% for ip in io.get('ips', []) %}<span class="badge bg-danger">{{ ip }}</span> {% else %}<span class="text-muted">-</span>{% endfor %}</div>
+            <div>Tài khoản: {% for u in io.get('users', []) %}<span class="badge bg-secondary">{{ u }}</span> {% else %}<span class="text-muted">-</span>{% endfor %}</div>
+            <div>Tiến trình/lệnh: {% for p in io.get('processes', []) %}<code>{{ p }}</code> {% else %}<span class="text-muted">-</span>{% endfor %}</div>
+            <div>Tệp/URL: {% for f in io.get('files', []) %}<code>{{ f }}</code> {% else %}<span class="text-muted">-</span>{% endfor %}</div>
+            <strong class="d-block mt-2">Khuyến nghị khắc phục</strong><ol class="mb-0">{% for r in inv.recommendations_list %}<li>{{ r }}</li>{% endfor %}</ol></div>
+        </div>
+        <strong class="d-block mt-2">Dòng thời gian</strong>
+        <div class="timeline mt-2">{% for t in inv.timeline_list %}<div class="timeline-item"><span class="mono">{{ t.time }}</span> <strong>{{ t.host }}</strong> {{ t.event }}<br><span class="text-muted">{{ t.note }}</span></div>{% endfor %}</div>
+      </div></div>
+    {% endfor %}
+
+    <!-- Sự kiện liên kết -->
+    <div class="card mb-3"><div class="card-header">Sự kiện bằng chứng ({{ events|length }})</div>
+      <div class="table-responsive"><table class="table table-sm table-hover mb-0"><thead class="table-light"><tr><th>Thời gian</th><th>Máy</th><th>Event</th><th>Hành động</th><th>Tài khoản</th><th>IP</th><th>Thông điệp</th></tr></thead><tbody>
+      {% for e in events %}<tr><td class="text-nowrap"><a href="{{ url_for('main.log_detail', event_id=e.id) }}">{{ e.event_time|localtime }}</a></td><td>{{ e.host }}</td><td class="mono">{{ e.event_id }}</td><td>{{ e.action }}</td><td>{{ e.user_name or '-' }}</td><td class="mono">{{ e.src_ip or '-' }}</td><td class="msg-cell" title="{{ e.message }}">{{ e.message }}</td></tr>{% endfor %}
+      </tbody></table></div></div>
+  </div>
+
+  <div class="col-lg-4">
+    <!-- Xử lý -->
+    {% if current_user.role in ('admin', 'analyst') %}
+    <div class="card mb-3"><div class="card-header">Xử lý cảnh báo</div><div class="card-body">
+      <form method="post" action="{{ url_for('main.alert_update', alert_id=alert.id) }}">{{ csrf_field() }}
+        <div class="mb-2"><label class="form-label small mb-0">Trạng thái</label><select class="form-select form-select-sm" name="status">{% for s in statuses %}<option value="{{ s }}" {{ 'selected' if alert.status == s }}>{{ s|status_label }}</option>{% endfor %}</select></div>
+        <div class="mb-2"><label class="form-label small mb-0">Mức độ</label><select class="form-select form-select-sm" name="severity">{% for s in ['critical', 'high', 'medium', 'low', 'info'] %}<option value="{{ s }}" {{ 'selected' if alert.severity == s }}>{{ s|sev_label }}</option>{% endfor %}</select></div>
+        <div class="mb-2"><label class="form-label small mb-0">Người phụ trách</label><select class="form-select form-select-sm" name="assigned_to"><option value="">Chưa gán</option>{% for u in users %}<option value="{{ u.id }}" {{ 'selected' if alert.assigned_to == u.id }}>{{ u.full_name or u.username }}</option>{% endfor %}</select></div>
+        <div class="mb-2"><label class="form-label small mb-0">Ghi chú xử lý</label><textarea class="form-control form-control-sm" name="note" rows="3">{{ alert.resolution_note or '' }}</textarea></div>
+        <div class="form-check mb-2"><input class="form-check-input" type="checkbox" name="extract_knowledge" value="1" id="ek"><label class="form-check-label small" for="ek">Khi đóng cảnh báo, để Knowledge Agent trích xuất bài học</label></div>
+        <button class="btn btn-primary btn-sm w-100"><i class="bi bi-save"></i> Lưu</button>
+      </form></div></div>
+    {% endif %}
+
+    <!-- Enrichment -->
+    <div class="card mb-3"><div class="card-header"><i class="bi bi-diagram-3"></i> Làm giàu dữ liệu (Enrichment Agent)</div><div class="card-body small">
+      {% if en %}
+        {% if en.risk_flags %}<strong>Chỉ dấu rủi ro</strong><ul class="flag-list mb-2">{% for f in en.risk_flags %}<li><i class="bi bi-flag-fill text-danger"></i> {{ f }}</li>{% endfor %}</ul>{% else %}<div class="text-muted mb-2">Không có chỉ dấu rủi ro bổ sung.</div>{% endif %}
+        {% if en.ip %}<strong>IP nguồn {{ en.ip.ip }}</strong>
+          <div>Loại: {{ en.ip.type }} · Uy tín: <span class="badge {{ 'bg-danger' if en.ip.reputation.verdict == 'malicious' else 'bg-warning text-dark' if en.ip.reputation.verdict == 'suspicious' else 'bg-light text-dark border' }}">{{ en.ip.reputation.verdict }}</span> {% if en.ip.reputation.note %}<span class="text-muted">({{ en.ip.reputation.note }})</span>{% endif %}</div>
+          {% set h = en.ip.history or {} %}{% if h.total_events %}<div>7 ngày: {{ h.total_events }} sự kiện, {{ h.failed_auth }} thất bại, {{ h.success_auth }} thành công; {{ h.hosts_targeted|length }} máy, {{ h.users_tried|length }} tài khoản</div>{% endif %}
+        {% endif %}
+        {% if en.user %}<strong class="d-block mt-2">Tài khoản {{ en.user.user }}</strong><div>{{ 'Đặc quyền' if en.user.is_privileged else 'Thường' }} · 24h: {{ en.user.events_24h }} sự kiện ({{ en.user.failed_24h }} thất bại, {{ en.user.success_24h }} thành công) · {{ en.user.hosts_24h|length }} máy</div>{% endif %}
+        {% if en.host %}<strong class="d-block mt-2">Máy {{ en.host.host }}</strong><div>{{ en.host.os_type or '' }} {{ en.host.os_version or '' }} · 24h: {{ en.host.events_24h }} sự kiện · {{ en.host.open_alerts }} cảnh báo mở · {{ en.host.alerts_7d }} cảnh báo/7 ngày</div>{% endif %}
+        {% if en.time %}<div class="mt-2">Giờ địa phương: {{ en.time.local_time }} {% if en.time.off_hours %}<span class="badge bg-warning text-dark">ngoài giờ</span>{% endif %}{% if en.time.weekend %}<span class="badge bg-warning text-dark">cuối tuần</span>{% endif %}</div>{% endif %}
+        {% if en.related_alerts %}<strong class="d-block mt-2">Cảnh báo liên quan</strong><ul class="mb-2">{% for r in en.related_alerts %}<li><a href="{{ url_for('main.alert_detail', alert_id=r.id) }}">#{{ r.id }} {{ r.title }}</a> <span class="badge sev-{{ r.severity }}">{{ r.severity|sev_label }}</span></li>{% endfor %}</ul>{% endif %}
+        {% if en.knowledge_matches %}<strong class="d-block mt-2">Tri thức tương tự</strong><ul class="mb-0">{% for k in en.knowledge_matches %}<li><a href="{{ url_for('main.kb_detail', article_id=k.id) }}">{{ k.title }}</a></li>{% endfor %}</ul>{% endif %}
+      {% else %}<div class="text-muted">Chưa làm giàu dữ liệu.</div>{% endif %}
+    </div></div>
+
+    <!-- AI runs -->
+    <div class="card mb-3"><div class="card-header">Nhật ký tác tử AI</div>
+      <table class="table table-sm mb-0 small"><thead class="table-light"><tr><th>Tác tử</th><th>Chế độ</th><th>Thời gian</th><th>Token</th><th></th></tr></thead><tbody>
+      {% for r in runs %}<tr><td>{{ r.agent_name }}<br><span class="text-muted">{{ r.started_at|localtime }}</span></td><td>{{ r.mode }}{% if r.model %}<br><span class="text-muted">{{ r.model }}</span>{% endif %}</td><td>{{ r.duration_ms }} ms</td><td>{{ r.input_tokens + r.output_tokens if r.input_tokens is not none else 0 }}</td><td>{% if r.status == 'ok' %}<i class="bi bi-check-circle text-success"></i>{% else %}<i class="bi bi-x-circle text-danger" title="{{ r.error }}"></i>{% endif %}{% if r.tool_calls_list %}<br><span class="text-muted">{{ r.tool_calls_list|length }} công cụ</span>{% endif %}</td></tr>
+      {% else %}<tr><td colspan="5" class="text-muted text-center">Chưa chạy tác tử</td></tr>{% endfor %}</tbody></table></div>
+
+    {% if articles %}<div class="card mb-3"><div class="card-header">Bài tri thức đã trích xuất</div><ul class="list-group list-group-flush small">{% for k in articles %}<li class="list-group-item"><a href="{{ url_for('main.kb_detail', article_id=k.id) }}">{{ k.title }}</a> <span class="badge bg-light text-dark border">{{ k.source }}</span></li>{% endfor %}</ul></div>{% endif %}
+  </div>
+</div>
+{% endblock %}

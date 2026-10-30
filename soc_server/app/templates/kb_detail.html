@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}{{ art.title }} - Cơ sở tri thức{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div><h4 class="mb-1">{{ art.title }}</h4>
+    <div class="small text-muted">{{ art.category }} · nguồn: {{ 'tác tử AI' if art.source == 'ai' else 'analyst' }} ({{ art.created_by }}) · {{ art.updated_at|localtime }} · dùng {{ art.times_used }} lần
+      {% if art.mitre_technique %}· <a target="_blank" href="https://attack.mitre.org/techniques/{{ art.mitre_technique.replace('.', '/') }}/">{{ art.mitre_technique }}</a>{% endif %}
+      {% if art.related_alert_id %}· từ cảnh báo <a href="{{ url_for('main.alert_detail', alert_id=art.related_alert_id) }}">#{{ art.related_alert_id }}</a>{% endif %}</div>
+    <div class="mt-1">{% for t in art.tag_list %}<span class="badge bg-secondary">{{ t }}</span> {% endfor %}</div></div>
+  <div>{% if current_user.role in ('admin', 'analyst') %}<a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.kb_edit', article_id=art.id) }}"><i class="bi bi-pencil"></i> Sửa</a>
+    <form class="d-inline" method="post" action="{{ url_for('main.kb_delete', article_id=art.id) }}" data-confirm="Xóa bài này?">{{ csrf_field() }}<button class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i></button></form>{% endif %}
+    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.kb') }}">Danh sách</a></div>
+</div>
+{% if art.summary %}<div class="alert alert-info py-2">{{ art.summary }}</div>{% endif %}
+<div class="card"><div class="card-body kb-content">{{ art.content|md|safe }}</div></div>
+{% endblock %}
