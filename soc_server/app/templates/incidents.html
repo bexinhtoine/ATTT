@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+{% from 'base.html' import pager %}
+{% block content %}
+<h4>Hồ sơ sự cố (Incident)</h4>
+<p class="text-muted">Liên kết cảnh báo thành hồ sơ điều tra; người phân tích xác nhận các gợi ý.</p>
+<form class="mb-3"><select name="status" class="form-select d-inline w-auto"><option value="">Tất cả trạng thái</option>{% for key,label in statuses.items() %}<option value="{{ key }}" {{ 'selected' if request.args.get('status') == key }}>{{ label }}</option>{% endfor %}</select> <button class="btn btn-outline-primary">Lọc</button></form>
+<table class="table"><thead><tr><th>Incident</th><th>Trạng thái</th><th>Mức độ</th><th>Phụ trách</th><th>Cảnh báo</th></tr></thead><tbody>{% for item in page.items %}<tr><td><a href="{{ url_for('incidents.detail', incident_id=item.id) }}">#{{ item.id }} {{ item.title }}</a></td><td>{{ item.status_label }}</td><td>{{ item.severity|sev_label }}</td><td>{{ item.assignee.username if item.assignee else 'Chưa gán' }}</td><td>{{ item.links|length }}</td></tr>{% else %}<tr><td colspan="5">Chưa có incident.</td></tr>{% endfor %}</tbody></table>{{ pager(page, 'incidents.index') }}
+{% if current_user.role in ('admin','analyst') %}
+<div class="card mt-4"><div class="card-header">Tạo incident từ cảnh báo chưa gán</div><div class="card-body"><p class="small">Tối đa 100 cảnh báo mới nhất. Có thể tạo từ trang chi tiết cảnh báo.</p>
+<form method="post" action="{{ url_for('incidents.create') }}">{{ csrf_field() }}<label class="d-block">Tiêu đề<input class="form-control mb-2" name="title" maxlength="255" placeholder="Để trống để lấy tiêu đề cảnh báo đầu"></label><label class="d-block">Lý do liên kết<input class="form-control mb-2" name="reason" maxlength="2000" required></label>
+<div class="overflow-auto mb-3" style="max-height:320px">{% for alert in unlinked %}<label class="d-block py-1"><input type="checkbox" name="alert_ids" value="{{ alert.id }}"> #{{ alert.id }} {{ alert.title }} — {{ alert.host or '-' }} / {{ alert.user_name or '-' }}</label>{% else %}<p>Không có cảnh báo chưa gán.</p>{% endfor %}</div><button class="btn btn-primary" {{ 'disabled' if not unlinked }}>Tạo incident</button></form></div></div>{% endif %}
+{% endblock %}

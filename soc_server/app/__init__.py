@@ -22,7 +22,7 @@ from sqlalchemy import event
 from .extensions import db
 from .models import (SEVERITY_LABELS, ALERT_STATUS_LABELS, ROLE_LABELS, RULE_TYPE_LABELS, utcnow)
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.2.0"
 
 
 class SOCJSONProvider(DefaultJSONProvider):
@@ -47,6 +47,8 @@ def create_app(config_object=None, start_background=True):
     with app.app_context():
         @event.listens_for(db.engine, "connect")
         def _sqlite_pragmas(dbapi_conn, _record):
+            if db.engine.dialect.name != "sqlite":
+                return
             cur = dbapi_conn.cursor()
             cur.execute("PRAGMA journal_mode=WAL")
             cur.execute("PRAGMA synchronous=NORMAL")
@@ -63,6 +65,8 @@ def create_app(config_object=None, start_background=True):
     app.register_blueprint(auth_bp)
     app.register_blueprint(api_bp)
     app.register_blueprint(main_bp)
+    from .incidents import bp as incidents_bp
+    app.register_blueprint(incidents_bp)
     app.before_request(load_current_user)
     _register_csrf(app)
     _warn_insecure_defaults(app)
@@ -73,8 +77,12 @@ def create_app(config_object=None, start_background=True):
     app.extensions["soc_llm_status"] = lambda: LLMClient.from_app(app)
 
     _register_template_helpers(app)
+    from .platforms import register_platforms
+    register_platforms(app)
     _register_error_handlers(app)
     if start_background:
+        from .work import start_worker
+        start_worker(app)
         _start_maintenance(app)
     return app
 
@@ -103,7 +111,7 @@ def _register_csrf(app):
             return None
         if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
             return None
-        if request.path.startswith(CSRF_EXEMPT_PREFIXES):
+        if request.path in CSRF_EXEMPT_PREFIXES:
             return None
         expected = session.get("_csrf_token") or ""
         sent = request.headers.get("X-CSRF-Token") or request.form.get("_csrf_token") or ""
@@ -168,7 +176,8 @@ def _register_template_helpers(app):
         import markdown as _md
 
         def md(text):
-            return _md.markdown(text or "", extensions=["tables", "fenced_code"])
+            from .safe_html import sanitize_html
+            return sanitize_html(_md.markdown(text or "", extensions=["tables", "fenced_code"]))
     except ImportError:  # không có gói markdown -> hiển thị dạng văn bản thô
         from markupsafe import escape
 
@@ -212,6 +221,8 @@ def _register_error_handlers(app):
     @app.errorhandler(500)
     def server_error(_e):
         db.session.rollback()
+        if request.path.startswith("/api/"):
+            return {"error": "Lỗi máy chủ nội bộ; dữ liệu chưa ACK cần gửi lại."}, 500
         return render_template("error.html", code=500, message="Lỗi máy chủ nội bộ."), 500
 
 
@@ -232,7 +243,14 @@ def _start_maintenance(app):
                     db.session.commit()
                     if time.time() - last_cleanup > 3600:
                         keep = utcnow() - timedelta(days=app.config.get("RETENTION_DAYS", 30))
-                        LogEvent.query.filter(LogEvent.event_time < keep).delete(synchronize_session=False)
+                        from .models import AlertEvent, WorkJob
+                        # Preserve evidence and pending detection input; keep received late logs.
+                        pending = WorkJob.query.filter(WorkJob.kind == "detection",
+                                                       WorkJob.status != "succeeded").count()
+                        if not pending:
+                            linked = db.session.query(AlertEvent.event_id)
+                            LogEvent.query.filter(LogEvent.received_at < keep,
+                                                  ~LogEvent.id.in_(linked)).delete(synchronize_session=False)
                         db.session.commit()
                         last_cleanup = time.time()
                 except Exception:

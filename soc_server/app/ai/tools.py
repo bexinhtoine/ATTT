@@ -12,7 +12,7 @@ from datetime import timedelta
 from sqlalchemy import or_
 
 from ..extensions import db
-from ..models import LogEvent, Alert, Agent, KnowledgeArticle, utcnow
+from ..models import LogEvent, Alert, Agent, KnowledgeArticle, KnowledgeReview, utcnow
 from .. import enrichment
 
 TOOL_DEFINITIONS = [
@@ -83,19 +83,26 @@ class ToolExecutor:
     def __init__(self, alert):
         self.alert = alert
         self.center = alert.last_event_time or alert.created_at or utcnow()
+        self.cutoff = utcnow()
+        self.examined_event_ids = set()
 
     def __call__(self, name, args):
         fn = getattr(self, name, None)
-        if fn is None or name.startswith("_"):
+        if fn is None or name not in {t["name"] for t in TOOL_DEFINITIONS}:
             raise ValueError("Không có công cụ tên '%s'" % name)
         return fn(**(args or {}))
 
     # ---------------------------------------------------------------- tools
     def query_events(self, host="", src_ip="", user="", source="", keyword="",
                      minutes_before=30, minutes_after=10, limit=50):
-        start = self.center - timedelta(minutes=int(minutes_before or 30))
-        end = self.center + timedelta(minutes=int(minutes_after or 10))
-        q = LogEvent.query.filter(LogEvent.event_time >= start, LogEvent.event_time <= end)
+        before = max(0, min(int(minutes_before), 1440))
+        after = max(0, min(int(minutes_after), 1440))
+        start = self.center - timedelta(minutes=before)
+        end = self.center + timedelta(minutes=after)
+        q = LogEvent.query.filter(LogEvent.event_time >= start, LogEvent.event_time <= end,
+                                 LogEvent.received_at <= self.cutoff)
+        if not any((host, src_ip, user, source, keyword)):
+            q = q.filter(LogEvent.host == self.alert.host)
         if host:
             q = q.filter(LogEvent.host == host)
         if src_ip:
@@ -107,24 +114,29 @@ class ToolExecutor:
         if keyword:
             q = q.filter(LogEvent.message.ilike("%%%s%%" % keyword))
         limit = max(1, min(int(limit or 50), 100))
-        rows = q.order_by(LogEvent.event_time.desc()).limit(limit).all()
+        rows = q.order_by(LogEvent.event_time.desc(), LogEvent.id.desc()).limit(limit + 1).all()
+        truncated = len(rows) > limit
+        rows = rows[:limit]
         rows.reverse()
-        return {"count": len(rows), "window": [_dt(start), _dt(end)], "events": [e.compact() for e in rows]}
+        self.examined_event_ids.update(e.id for e in rows)
+        return {"count": len(rows), "truncated": truncated, "cutoff": _dt(self.cutoff),
+                "window": [_dt(start), _dt(end)], "events": [e.compact() for e in rows]}
 
     def lookup_ip(self, ip=""):
         if not ip:
             return {"error": "Thiếu địa chỉ IP"}
         return {**enrichment.classify_ip(ip), "reputation": enrichment.ip_reputation(ip),
-                "history": enrichment.ip_history(ip)}
+                "history": enrichment.ip_history(ip, cutoff=self.cutoff), "reputation_is_live": True}
 
     def get_host_info(self, host=""):
         host = host or self.alert.host
         agent = Agent.query.filter_by(hostname=host).first()
-        return enrichment.host_context(agent, host)
+        return enrichment.host_context(agent, host, cutoff=self.cutoff)
 
     def get_related_alerts(self, host="", src_ip="", user="", days=7):
-        since = utcnow() - timedelta(days=int(days or 7))
-        q = Alert.query.filter(Alert.id != self.alert.id, Alert.created_at >= since)
+        since = self.cutoff - timedelta(days=max(1, min(int(days or 7), 30)))
+        q = Alert.query.filter(Alert.id != self.alert.id, Alert.created_at >= since,
+                               Alert.created_at <= self.cutoff)
         conds = []
         if host:
             conds.append(Alert.host == host)
@@ -134,6 +146,8 @@ class ToolExecutor:
             conds.append(Alert.user_name == user)
         if conds:
             q = q.filter(or_(*conds))
+        else:
+            q = q.filter(Alert.host == self.alert.host)
         rows = q.order_by(Alert.created_at.desc()).limit(20).all()
         return [{"id": a.id, "title": a.title, "severity": a.severity, "status": a.status,
                  "created_at": _dt(a.created_at), "host": a.host, "src_ip": a.src_ip, "user": a.user_name,
@@ -148,12 +162,14 @@ class ToolExecutor:
             like = "%%%s%%" % w
             conds.append(or_(KnowledgeArticle.title.ilike(like), KnowledgeArticle.tags.ilike(like),
                              KnowledgeArticle.summary.ilike(like), KnowledgeArticle.mitre_technique.ilike(like)))
-        rows = KnowledgeArticle.query.filter(or_(*conds)).order_by(
+        approved = db.or_(KnowledgeReview.status == "approved",
+                          db.and_(KnowledgeReview.article_id.is_(None), KnowledgeArticle.source == "manual"))
+        rows = KnowledgeArticle.query.outerjoin(KnowledgeReview).filter(
+            approved, or_(*conds), KnowledgeArticle.updated_at <= self.cutoff,
+            db.or_(KnowledgeReview.reviewed_at.is_(None), KnowledgeReview.reviewed_at <= self.cutoff)).order_by(
             KnowledgeArticle.times_used.desc(), KnowledgeArticle.updated_at.desc()).limit(max(1, min(int(limit or 5), 10))).all()
-        for r in rows:
-            r.times_used = (r.times_used or 0) + 1
-        db.session.commit()
         return [{"id": r.id, "title": r.title, "category": r.category, "tags": r.tag_list,
+                 "revision": r.review.revision if r.review else 1,
                  "summary": r.summary, "content": (r.content or "")[:1500]} for r in rows]
 
     def mitre_lookup(self, technique_id=""):

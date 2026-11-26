@@ -65,6 +65,39 @@ def event_field(ev, name):
     return getattr(ev, name, None)
 
 
+def validate_conditions(cond, sequence=False):
+    if not isinstance(cond, dict) or not cond:
+        raise ValueError("Điều kiện luật phải là object không rỗng")
+    if sequence:
+        unknown = set(cond) - {"precondition", "trigger", "min_count", "join_fields"}
+        if unknown:
+            raise ValueError("Khóa chuỗi không hỗ trợ: %s" % sorted(unknown))
+        validate_conditions(cond.get("precondition"))
+        validate_conditions(cond.get("trigger"))
+        if type(cond.get("min_count", 3)) is not int or cond.get("min_count", 3) < 1:
+            raise ValueError("min_count phải là số nguyên dương")
+        fields = cond.get("join_fields", ["host", "user_name", "src_ip"])
+        if not isinstance(fields, list) or not fields:
+            raise ValueError("join_fields phải là danh sách trường")
+        for field in fields:
+            if not isinstance(field, str) or (not field.startswith("extra.") and
+                                              not hasattr(LogEvent, FIELD_MAP.get(field, field))):
+                raise ValueError("Trường liên kết không hợp lệ")
+        return
+    supported = {"source", "event_id", "action", "category", "outcome", "host", "process",
+                 "severity_min", "user_in", "field", "regex", "not_regex", "extra", "src_ip_public", "scope_host"}
+    unknown = set(cond) - supported
+    if unknown:
+        raise ValueError("Điều kiện không hỗ trợ: %s" % sorted(unknown))
+    if not (set(cond) - {"field", "scope_host"}):
+        raise ValueError("Luật thiếu điều kiện phát hiện")
+    if "extra" in cond and not isinstance(cond["extra"], dict):
+        raise ValueError("extra trong luật phải là object")
+    for key in ("regex", "not_regex"):
+        if cond.get(key):
+            _rx(cond[key])
+
+
 def match_conditions(cond, ev):
     """Kiểm tra một sự kiện có thỏa toàn bộ điều kiện của luật hay không."""
     if not cond:
@@ -125,13 +158,25 @@ class RuleEngine:
             DetectionRule.query.filter_by(enabled=True).order_by(DetectionRule.id).all())
 
     # ------------------------------------------------------------------ public
-    def evaluate(self, events):
+    def evaluate(self, events, commit=True, strict=False):
         """events: danh sách LogEvent ĐÃ được commit. Trả về list (alert, is_new)."""
         results = {}
         events = sorted(events, key=lambda e: (e.event_time, e.id))
         for rule in self.rules:
             cond = rule.conditions_dict
-            for ev in events:
+            validate_conditions(cond, sequence=rule.rule_type == "sequence")
+            rule_events = {ev.id: ev for ev in events}
+            if rule.rule_type in ("threshold", "sequence"):
+                prerequisite = cond.get("precondition", {}) if rule.rule_type == "sequence" else cond
+                trigger = cond.get("trigger", {}) if rule.rule_type == "sequence" else cond
+                for ev in events:
+                    if match_conditions(prerequisite, ev):
+                        group, value = self._group(rule, ev)
+                        # Re-evaluate later triggers when their prerequisites arrive late.
+                        later = self._candidates(trigger, group, value, ev.event_time,
+                                                 ev.event_time + timedelta(seconds=rule.window_seconds or 300))
+                        rule_events.update({candidate.id: candidate for candidate in later})
+            for ev in sorted(rule_events.values(), key=lambda e: (e.event_time, e.id)):
                 try:
                     if rule.rule_type == "match":
                         if match_conditions(cond, ev):
@@ -144,8 +189,11 @@ class RuleEngine:
                             self._eval_sequence(rule, cond, ev, results)
                 except Exception:            # một luật lỗi không được làm hỏng cả lô
                     current_app.logger.exception("Lỗi khi đánh giá luật %s", rule.code)
+                    if strict:
+                        raise
                     db.session.rollback()
-        db.session.commit()
+        if commit:
+            db.session.commit()
         return list(results.values())
 
     def evaluate_range(self, start, end, batch=500):
@@ -180,14 +228,19 @@ class RuleEngine:
             q = q.filter(col == group_value)
         for key, column in SQL_SIMPLE_KEYS.items():          # đẩy các điều kiện đơn giản xuống SQL
             if key in cond and cond[key] not in (None, "", []):
-                q = q.filter(column.in_([str(x) for x in _as_list(cond[key])]))
-        cands = q.order_by(LogEvent.event_time, LogEvent.id).limit(5000).all()
+                q = q.filter(db.func.lower(column).in_([str(x).lower() for x in _as_list(cond[key])]))
+        cap = current_app.config.get("DETECTION_CANDIDATE_LIMIT", 5000)
+        cands = q.order_by(LogEvent.event_time, LogEvent.id).limit(cap + 1).all()
+        if len(cands) > cap:
+            raise ValueError("Cửa sổ luật vượt giới hạn %d ứng viên; cần thu hẹp hoặc tăng cấu hình." % cap)
         return [c for c in cands if match_conditions(cond, c)]   # phần còn lại (regex, extra) lọc bằng Python
 
     def _eval_threshold(self, rule, cond, ev, results):
         gfield, gval = self._group(rule, ev)
         start = ev.event_time - timedelta(seconds=rule.window_seconds or 300)
         cands = self._candidates(cond, gfield, gval, start, ev.event_time)
+        if cond.get("scope_host", True):
+            cands = [c for c in cands if c.host == ev.host]
         if rule.distinct_field:
             values = {event_field(c, rule.distinct_field) for c in cands}
             values.discard(None)
@@ -203,7 +256,9 @@ class RuleEngine:
         gfield, gval = self._group(rule, ev)
         start = ev.event_time - timedelta(seconds=rule.window_seconds or 600)
         cands = self._candidates(pre, gfield, gval, start, ev.event_time)
-        cands = [c for c in cands if c.id != ev.id]
+        join_fields = cond.get("join_fields", ["host", "user_name", "src_ip"])
+        cands = [c for c in cands if c.event_time < ev.event_time
+                 and all(event_field(c, field) == event_field(ev, field) for field in join_fields)]
         if len(cands) >= min_count:
             self._raise(rule, ev, cands + [ev], len(cands), results)
 
@@ -211,19 +266,26 @@ class RuleEngine:
         """Tạo mới hoặc gộp vào cảnh báo đang mở (dedup)."""
         gfield, gval = self._group(rule, ev)
         dedup_key = "%s|%s|%s" % (rule.id, ev.host, gval)
+        if rule.rule_type == "sequence":
+            dedup_key += "|%s" % (ev.user_name or "")
         hot_window = max(rule.window_seconds or 0, self.MATCH_DEDUP_SECONDS) * 2
         existing = (Alert.query
                     .filter(Alert.dedup_key == dedup_key, Alert.status.in_(OPEN_STATUSES),
-                            Alert.last_event_time >= ev.event_time - timedelta(seconds=hot_window))
+                            Alert.last_event_time >= ev.event_time - timedelta(seconds=hot_window),
+                            Alert.first_event_time <= ev.event_time + timedelta(seconds=hot_window))
                     .order_by(Alert.id.desc()).first())
         if existing:
             alert, is_new = existing, False
             if rule.rule_type == "match":
-                alert.event_count = (alert.event_count or 0) + 1
+                if AlertEvent.query.filter_by(alert_id=alert.id, event_id=ev.id).first() is None:
+                    alert.event_count = (alert.event_count or 0) + 1
             else:
                 alert.event_count = max(alert.event_count or 0, count)
             if ev.event_time and (alert.last_event_time is None or ev.event_time > alert.last_event_time):
                 alert.last_event_time = ev.event_time
+            first = min((e.event_time for e in evidence if e.event_time), default=ev.event_time)
+            if first and (alert.first_event_time is None or first < alert.first_event_time):
+                alert.first_event_time = first
             alert.updated_at = utcnow()
             if SEVERITY_ORDER.get(rule.severity, 0) > SEVERITY_ORDER.get(alert.severity, 0):
                 alert.severity = rule.severity

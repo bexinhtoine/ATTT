@@ -448,7 +448,16 @@ def parse_windows_event_xml(xml_text):
     if not xml_text:
         return []
     try:
-        events = list(ET.fromstring("<Events>" + xml_text + "</Events>"))
+        try:
+            root = ET.fromstring(xml_text)
+        except ET.ParseError:
+            root = ET.fromstring("<Events>" + xml_text + "</Events>")
+        # wevtutil /e:Events returns a document wrapper; Get-WinEvent.ToXml()
+        # returns a single Event. Do not treat the wrapper itself as an event.
+        kind = root.tag.rsplit("}", 1)[-1]
+        events = [root] if kind == "Event" else (
+            [child for child in root if child.tag.rsplit("}", 1)[-1] == "Event"]
+            if kind == "Events" else [])
     except ET.ParseError:
         events = []
         for chunk in re.findall(r"<Event[\s>].*?</Event>", xml_text, flags=re.S):
@@ -585,10 +594,94 @@ def normalize_windows_event(w):
     return ev
 
 
+LEGACY_SECURITY_EVENTS = {
+    **{str(n): ("logon_failed", "failure", "authentication", "medium", ["4625"])
+       for n in (529, 530, 531, 532, 533, 534, 535, 536, 537, 539)},
+    "528": ("logon_success", "success", "authentication", "info", ["4624"]),
+    "540": ("logon_success", "success", "authentication", "info", ["4624"]),
+    "538": ("logoff", "success", "authentication", "info", ["4634"]),
+    "551": ("logoff", "success", "authentication", "info", ["4647"]),
+    "517": ("audit_log_cleared", "success", "defense_evasion", "critical", ["1102"]),
+    "624": ("user_created", "success", "account", "medium", ["4720"]),
+    "630": ("user_deleted", "success", "account", "low", ["4726"]),
+    "644": ("user_locked", "success", "account", "medium", ["4740"]),
+    "612": ("audit_policy_changed", "success", "policy", "high", ["4719"]),
+    "601": ("service_install_attempt", "unknown", "service", "medium", ["4697"]),
+    "632": ("member_added_to_group", "success", "account", "medium", ["4728"]),
+    "636": ("member_added_to_group", "success", "account", "medium", ["4732"]),
+    "660": ("member_added_to_group", "success", "account", "medium", ["4756"]),
+    "602": ("scheduled_task_changed", "unknown", "persistence", "medium",
+            ["4698", "4699", "4700", "4701", "4702"]),
+}
+
+
+def normalize_legacy_windows(ev):
+    """Classify classic Security events without changing their original ID or raw log.
+
+    Microsoft Appendix L maps classic IDs to newer events. In particular, 602 is
+    ambiguous; only a message explicitly describing creation is a created task.
+    Named fields are extracted conservatively from the event's own message.
+    """
+    spec = LEGACY_SECURITY_EVENTS.get(str(ev.get("event_id")))
+    if ev.get("source") != "windows.security" or spec is None:
+        return ev
+    action, outcome, category, severity, equivalents = spec
+    raw = ev.get("raw") or ev.get("message") or ""
+    fields = {}
+    for key, value in re.findall(r"^[ \t]*([A-Za-z][A-Za-z 0-9()/ _-]{0,60}):[ \t]*(.*?)[ \t]*$", raw, re.M):
+        value = value.strip()
+        if value and value != "-":
+            fields.setdefault(key.strip().casefold(), value)
+    def field(*keys):
+        return next((fields[k] for k in keys if fields.get(k)), None)
+    extra = dict(ev.get("extra") or {})
+    extra.update(legacy_event_id=str(ev["event_id"]), equivalent_modern_event_ids=equivalents,
+                 legacy_normalizer="windows-classic-v1", legacy_message_fields=fields)
+    target = field("new account name", "target account name", "target user name", "account name", "user name")
+    if action == "member_added_to_group":
+        group = field("target account name", "group name", "target group name")
+        sid = field("target account id", "group id", "target sid")
+        target = field("member name", "member account name", "member id")
+        extra["group"] = group
+        if ((group and group.casefold() in PRIVILEGED_GROUPS) or
+                (sid and re.fullmatch(r"S-1-5-(?:32-(?:544|555)|21-(?:\d+-){3}(?:512|518|519))", sid, re.I))):
+            action, severity = "member_added_to_privileged_group", "high"
+    if action == "scheduled_task_changed":
+        if re.search(r"scheduled\s+task\s+(?:was\s+)?created\b|created\s+(?:a\s+)?(?:new\s+)?scheduled\s+task", raw, re.I):
+            action, outcome = "scheduled_task_created", "success"
+        elif re.search(r"scheduled\s+task\s+(?:was\s+)?deleted\b", raw, re.I):
+            action, outcome = "scheduled_task_deleted", "success"
+        extra["TaskName"] = field("task name", "file name", "job name")
+    if action == "service_install_attempt":
+        extra["ServiceName"] = field("service name")
+    if target:
+        ev["user"] = target
+    logon_type = field("logon type")
+    if logon_type and logon_type.isdigit():
+        extra["LogonType"] = logon_type
+    address = field("source network address", "source ip address", "client address")
+    if address:
+        import ipaddress
+        try:
+            ev["src_ip"] = str(ipaddress.ip_address(address))
+        except ValueError:
+            pass
+    port = field("source port", "client port")
+    if port and port.isdigit() and int(port) <= 65535:
+        ev["src_port"] = int(port)
+    if outcome == "unknown" and ev.get("outcome") in ("success", "failure"):
+        outcome = ev["outcome"]
+    if extra.get("event_type") == 5:
+        outcome = "failure"
+    ev.update(action=action, outcome=outcome, category=category, severity=severity, extra=extra)
+    return ev
+
+
 def normalize_event(ev, default_host=None):
     """Làm sạch một dict sự kiện (dù do parser nào tạo) để chắc chắn đủ trường và đúng kiểu."""
     base = empty_event(ev.get("source") or "other", ev.get("host") or default_host)
     base.update({k: v for k, v in ev.items() if k in base})
+    normalize_legacy_windows(base)
     if base["severity"] not in SEVERITIES:
         base["severity"] = "info"
     if base["outcome"] not in ("success", "failure", "unknown"):

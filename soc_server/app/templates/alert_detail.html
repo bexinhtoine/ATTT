@@ -3,6 +3,10 @@
 {% block content %}
 {% set tri = ai.get('triage') or {} %}
 {% set en = ai.get('enrichment') or {} %}
+{% if alert.incident_link %}<p>Thuộc <a href="{{ url_for('incidents.detail', incident_id=alert.incident_link.incident_id) }}">incident #{{ alert.incident_link.incident_id }}</a></p>
+{% elif current_user.role in ('admin', 'analyst') %}
+<form class="d-flex gap-2 mb-3" method="post" action="{{ url_for('incidents.create') }}">{{ csrf_field() }}<input type="hidden" name="alert_ids" value="{{ alert.id }}"><input class="form-control" name="reason" required maxlength="2000" placeholder="Lý do mở hồ sơ điều tra"><button class="btn btn-outline-primary text-nowrap">Tạo incident</button></form>
+{% endif %}
 <div class="d-flex justify-content-between align-items-start mb-3">
   <div>
     <h4 class="mb-1"><span class="badge sev-{{ alert.severity }}">{{ alert.severity|sev_label }}</span> #{{ alert.id }} {{ alert.title }}</h4>
@@ -11,7 +15,7 @@
   </div>
   <div class="text-end">
     <span class="badge status-{{ alert.status }} fs-6">{{ alert.status|status_label }}</span>
-    {% if alert.ai_priority %}<span class="badge {{ 'bg-danger' if alert.ai_priority <= 2 else 'bg-warning text-dark' if alert.ai_priority == 3 else 'bg-secondary' }} fs-6">Ưu tiên P{{ alert.ai_priority }}</span>{% endif %}
+    {% if alert.priority %}<span class="badge bg-dark fs-6">Ưu tiên xử lý P{{ alert.priority }}</span>{% endif %}
   </div>
 </div>
 
@@ -36,7 +40,7 @@
     <!-- AI Triage -->
     <div class="card mb-3 ai-panel"><div class="card-header d-flex justify-content-between align-items-center">
       <span><i class="bi bi-robot"></i> Phân loại bởi tác tử AI (Triage Agent)
-        {% if alert.ai_mode %}<span class="badge {{ 'bg-success' if alert.ai_mode == 'llm' else 'bg-secondary' }} ms-1">{{ 'Claude LLM' if alert.ai_mode == 'llm' else 'suy luận cục bộ' }}</span>{% endif %}</span>
+        {% if alert.ai_mode %}<span class="badge {{ 'bg-success' if alert.ai_mode == 'llm' else 'bg-secondary' }} ms-1">{{ 'LLM' if alert.ai_mode == 'llm' else 'suy luận cục bộ' }}</span>{% endif %}</span>
       {% if current_user.role in ('admin', 'analyst') %}
       <div class="btn-group btn-group-sm">
         <button class="btn btn-outline-primary" onclick="runAI({{ alert.id }}, 'triage', this)"><i class="bi bi-arrow-repeat"></i> Phân loại lại</button>
@@ -46,6 +50,9 @@
     </div>
       <div class="card-body">
       {% if tri %}
+        <p class="small text-muted">Điểm AI tự đánh giá</p>
+        {% if tri.get('analysis') %}<div class="small mb-2">Phân tích #{{ tri.analysis.run_id }} · dữ liệu nhận trước {{ tri.analysis.cutoff }} · {{ tri.analysis.examined_event_ids|length }} sự kiện đã xem.</div>{% endif %}
+        {% if tri.get('evidence_refs') %}<div class="small mb-2">Bằng chứng AI dẫn: {% for ref in tri.evidence_refs %}<a class="me-2" href="{{ url_for('main.log_detail', event_id=ref) }}">Sự kiện #{{ ref }}</a>{% endfor %}</div>{% endif %}
         <div class="d-flex flex-wrap gap-2 mb-2">
           <span class="badge {{ tri.verdict|verdict_class }} fs-6">{{ tri.verdict|verdict_label }}</span>
           <span class="badge bg-dark fs-6">Điểm rủi ro {{ tri.risk_score }}/100</span>
@@ -69,7 +76,7 @@
 
     <!-- Investigation -->
     {% for inv in investigations %}
-    <div class="card mb-3"><div class="card-header"><i class="bi bi-search"></i> Báo cáo điều tra #{{ inv.id }} <span class="badge {{ 'bg-success' if inv.mode == 'llm' else 'bg-secondary' }}">{{ 'Claude LLM' if inv.mode == 'llm' else 'cục bộ' }}</span> <span class="small text-muted">{{ inv.created_at|localtime }} · {{ inv.created_by }}</span></div>
+    <div class="card mb-3"><div class="card-header"><i class="bi bi-search"></i> Báo cáo điều tra #{{ inv.id }} <span class="badge {{ 'bg-success' if inv.mode == 'llm' else 'bg-secondary' }}">{{ 'LLM' if inv.mode == 'llm' else 'cục bộ' }}</span> <span class="small text-muted">{{ inv.created_at|localtime }} · {{ inv.created_by }}</span></div>
       <div class="card-body small">
         <p><strong>Giả thuyết:</strong> {{ inv.hypothesis }}</p>
         <p><strong>Tóm tắt:</strong> {{ inv.summary }}</p>
@@ -102,6 +109,8 @@
     {% if current_user.role in ('admin', 'analyst') %}
     <div class="card mb-3"><div class="card-header">Xử lý cảnh báo</div><div class="card-body">
       <form method="post" action="{{ url_for('main.alert_update', alert_id=alert.id) }}">{{ csrf_field() }}
+        <input type="hidden" name="expected_updated_at" value="{{ alert.updated_at.isoformat() }}">
+        <div class="mb-2"><label class="form-label small mb-0">Ưu tiên xử lý do analyst chọn</label><select class="form-select form-select-sm" name="priority"><option value="">Giữ hiện tại</option>{% for p in range(1, 6) %}<option value="{{ p }}" {{ 'selected' if alert.priority == p }}>P{{ p }}</option>{% endfor %}</select></div>
         <div class="mb-2"><label class="form-label small mb-0">Trạng thái</label><select class="form-select form-select-sm" name="status">{% for s in statuses %}<option value="{{ s }}" {{ 'selected' if alert.status == s }}>{{ s|status_label }}</option>{% endfor %}</select></div>
         <div class="mb-2"><label class="form-label small mb-0">Mức độ</label><select class="form-select form-select-sm" name="severity">{% for s in ['critical', 'high', 'medium', 'low', 'info'] %}<option value="{{ s }}" {{ 'selected' if alert.severity == s }}>{{ s|sev_label }}</option>{% endfor %}</select></div>
         <div class="mb-2"><label class="form-label small mb-0">Người phụ trách</label><select class="form-select form-select-sm" name="assigned_to"><option value="">Chưa gán</option>{% for u in users %}<option value="{{ u.id }}" {{ 'selected' if alert.assigned_to == u.id }}>{{ u.full_name or u.username }}</option>{% endfor %}</select></div>

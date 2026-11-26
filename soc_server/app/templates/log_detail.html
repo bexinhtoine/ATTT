@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Sự kiện #{{ ev.id }} - Agentic SOC{% endblock %}
 {% block content %}
+{% if ev.extra_dict.get('raw_truncated') or ev.extra_dict.get('message_truncated') %}<div class="alert alert-warning">Nội dung dài đã được cắt theo giới hạn lưu trữ. Metadata ghi nhận phần bị cắt; không coi đây là bản gốc đầy đủ.</div>{% endif %}
+{% if ev.extra_dict.get('timestamp_inferred') %}<div class="alert alert-info">Payload không cung cấp timestamp tường minh; thời gian được lấy từ parser hoặc thời điểm nhận.</div>{% endif %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h4 class="mb-0"><i class="bi bi-file-earmark-text"></i> Sự kiện #{{ ev.id }} <span class="badge sev-{{ ev.severity }}">{{ ev.severity|sev_label }}</span></h4>
   <a class="btn btn-outline-secondary btn-sm" href="javascript:history.back()"><i class="bi bi-arrow-left"></i> Quay lại</a>

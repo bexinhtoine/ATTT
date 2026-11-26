@@ -11,6 +11,8 @@ llm.py - Lớp bọc Claude API (Anthropic Python SDK).
 """
 import json
 import logging
+import time
+from .validation import validate_json
 
 from flask import current_app
 
@@ -24,13 +26,20 @@ log = logging.getLogger(__name__)
 
 class LLMUnavailable(Exception):
     """Ném ra khi không thể dùng LLM (không khóa, lỗi API, từ chối...) -> chuyển sang đường LOCAL."""
+    def __init__(self, message, usage=None, tool_calls=None):
+        super().__init__(message)
+        self.usage = usage or {}
+        self.tool_calls = tool_calls or []
 
 
 class LLMClient:
-    def __init__(self, api_key=None, model="claude-opus-5-5", effort="medium", max_tool_iterations=8):
+    def __init__(self, api_key=None, model="claude-opus-5-5", effort="medium", max_tool_iterations=8,
+                 max_tool_calls=24, tool_budget_seconds=240):
         self.model = model or "claude-opus-5-5"
         self.effort = effort or "medium"
         self.max_tool_iterations = max_tool_iterations
+        self.max_tool_calls = max_tool_calls
+        self.tool_budget_seconds = tool_budget_seconds
         # timeout 180 giây để luồng AI nền không treo quá lâu khi mạng lỗi; SDK tự thử lại 2 lần (429/5xx)
         self._client = (anthropic.Anthropic(api_key=api_key, timeout=180.0, max_retries=2)
                         if (anthropic and api_key) else None)
@@ -43,9 +52,20 @@ class LLMClient:
     @classmethod
     def from_app(cls, app=None):
         cfg = (app or current_app).config
+        provider = cfg.get("AI_PROVIDER", "anthropic")
+        if provider == "openai":
+            from .openai_client import OpenAILLMClient
+            return OpenAILLMClient(api_key=cfg.get("OPENAI_API_KEY"), model=cfg.get("AI_MODEL") or "gpt-4.1-mini",
+                                   max_tool_iterations=cfg.get("AI_MAX_TOOL_ITERATIONS", 8),
+                                   max_tool_calls=cfg.get("AI_MAX_TOOL_CALLS", 24),
+                                   tool_budget_seconds=cfg.get("AI_TOOL_BUDGET_SECONDS", 240))
+        if provider != "anthropic":
+            raise ValueError("SOC_AI_PROVIDER phải là openai hoặc anthropic")
         return cls(api_key=cfg.get("ANTHROPIC_API_KEY"), model=cfg.get("AI_MODEL"),
                    effort=cfg.get("AI_EFFORT", "medium"),
-                   max_tool_iterations=cfg.get("AI_MAX_TOOL_ITERATIONS", 8))
+                   max_tool_iterations=cfg.get("AI_MAX_TOOL_ITERATIONS", 8),
+                   max_tool_calls=cfg.get("AI_MAX_TOOL_CALLS", 24),
+                   tool_budget_seconds=cfg.get("AI_TOOL_BUDGET_SECONDS", 240))
 
     @property
     def available(self):
@@ -86,9 +106,11 @@ class LLMClient:
             raise LLMUnavailable("Mô hình từ chối yêu cầu (%s)" % getattr(resp, "stop_details", ""))
         text = "".join(b.text for b in resp.content if b.type == "text")
         try:
-            return json.loads(text), self._usage(resp)
+            value = json.loads(text)
+            validate_json(value, schema)
+            return value, self._usage(resp)
         except ValueError as exc:
-            raise LLMUnavailable("Kết quả không phải JSON hợp lệ") from exc
+            raise LLMUnavailable("JSON không đúng schema: %s" % exc, usage=self._usage(resp)) from exc
 
     def run_with_tools(self, system, user_content, tools, executor, schema=None, max_tokens=8000):
         """Vòng lặp tác tử. executor(name, input_dict) -> str|dict. Trả về (kết quả, nhật ký tool, usage)."""
@@ -100,17 +122,21 @@ class LLMClient:
         if schema:
             output_config["format"] = {"type": "json_schema", "schema": schema}
         tool_log, usage = [], {"input_tokens": 0, "output_tokens": 0}
-        for _ in range(self.max_tool_iterations + 1):
+        deadline = time.monotonic() + self.tool_budget_seconds
+        for round_index in range(self.max_tool_iterations + 1):
+            if time.monotonic() >= deadline:
+                raise LLMUnavailable("Hết ngân sách thời gian gọi công cụ", usage, tool_log)
             try:
                 resp = self._create(model=self.model, max_tokens=max_tokens, system=system,
-                                    messages=messages, tools=tool_defs, output_config=output_config)
+                                    messages=messages, tools=tool_defs, output_config=output_config,
+                                    timeout=max(1, min(180, deadline - time.monotonic())))
             except anthropic.APIError as exc:
-                raise LLMUnavailable("Lỗi Claude API: %s" % exc) from exc
+                raise LLMUnavailable("Lỗi Claude API: %s" % exc, usage, tool_log) from exc
             u = self._usage(resp)
             usage["input_tokens"] += u["input_tokens"]
             usage["output_tokens"] += u["output_tokens"]
             if resp.stop_reason == "refusal":
-                raise LLMUnavailable("Mô hình từ chối yêu cầu")
+                raise LLMUnavailable("Mô hình từ chối yêu cầu", usage, tool_log)
             if resp.stop_reason == "pause_turn":
                 messages.append({"role": "assistant", "content": resp.content})
                 continue
@@ -119,13 +145,19 @@ class LLMClient:
                 text = "".join(b.text for b in resp.content if b.type == "text")
                 if schema:
                     try:
-                        return json.loads(text), tool_log, usage
+                        value = json.loads(text)
+                        validate_json(value, schema)
+                        return value, tool_log, usage
                     except ValueError as exc:
-                        raise LLMUnavailable("Kết quả không phải JSON hợp lệ") from exc
+                        raise LLMUnavailable("JSON không đúng schema: %s" % exc, usage, tool_log) from exc
                 return text, tool_log, usage
             messages.append({"role": "assistant", "content": resp.content})
             results = []
+            if round_index >= self.max_tool_iterations or len(tool_log) + len(tool_uses) > self.max_tool_calls:
+                raise LLMUnavailable("Vượt giới hạn gọi công cụ", usage, tool_log)
             for tu in tool_uses:          # thực thi mọi tool_use rồi trả về trong MỘT message
+                if time.monotonic() >= deadline:
+                    raise LLMUnavailable("Hết ngân sách thời gian gọi công cụ", usage, tool_log)
                 is_error = False
                 try:
                     out = executor(tu.name, tu.input or {})
@@ -139,4 +171,4 @@ class LLMClient:
                     block["is_error"] = True
                 results.append(block)
             messages.append({"role": "user", "content": results})
-        raise LLMUnavailable("Vượt quá %d vòng gọi công cụ" % self.max_tool_iterations)
+        raise LLMUnavailable("Vượt quá %d vòng gọi công cụ" % self.max_tool_iterations, usage, tool_log)

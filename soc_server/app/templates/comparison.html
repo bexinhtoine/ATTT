@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}So sánh Agentic SOC, Elastic Security và Wazuh{% endblock %}
+{% block content %}
+<h4>Agentic SOC · ELK/Elastic Security · Wazuh</h4>
+<p><span class="badge bg-secondary">Benchmark · {{ platform_choices[selected_platform] }}</span></p>
+<div class="card mb-3"><div class="card-header">Phạm vi ba hệ thống</div><div class="table-responsive"><table class="table mb-0"><thead><tr><th>Tiêu chí</th><th>Agentic SOC 1.2</th><th>ELK + Elastic Security</th><th>Wazuh</th></tr></thead><tbody>
+<tr><th>Vai trò</th><td>Hệ thống SOC của đề tài, hỗ trợ phát hiện và điều tra cảnh báo</td><td>Lưu trữ, tìm kiếm log và phát hiện hành vi an ninh</td><td>Thu thập dữ liệu từ máy, phân tích và hiển thị cảnh báo an ninh</td></tr>
+<tr><th>Luật</th><td>Match, threshold, sequence trong dự án</td><td>Các loại luật theo cấu hình Elastic Security</td><td>Decoder, luật XML và tương quan theo ruleset</td></tr>
+<tr><th>Hỗ trợ AI</th><td>Luồng enrichment/triage/investigation/knowledge; heuristic dự phòng</td><td>Cần ghi rõ tính năng, gói và connector AI sử dụng</td><td>Bài đo hiện tại chưa đánh giá tích hợp AI</td></tr>
+<tr><th>Phạm vi cần kiểm chứng</th><td>Độ đúng, bằng chứng, độ bền và giới hạn tải</td><td>Phiên bản, luật, scheduler, gói và tài nguyên</td><td>Phiên bản, decoder, luật, đường thu thập và tài nguyên</td></tr>
+</tbody></table></div></div>
+{% if error %}<div class="alert alert-info">{{ error }}</div>{% endif %}
+{% if report %}
+<div class="alert {{ 'alert-success' if report.comparison_ready else 'alert-warning' }}">{{ report.conclusion }}</div>
+<p><strong>{{ report.manifest.episodes }} kịch bản · {{ report.manifest.events }} sự kiện</strong> · Dữ liệu tổng hợp · 4 luật match · AI tắt</p>
+{% set platforms = [('soc', 'Agentic SOC'), ('elastic', 'Elastic Security'), ('wazuh', 'Wazuh')]|selectattr('0', 'in', ['soc', 'elastic', 'wazuh'] if selected_platform == 'all' else [selected_platform])|list %}
+<div class="table-responsive"><table class="table table-bordered bg-white"><thead><tr><th>Chỉ số</th>{% for key, name in platforms %}<th>{{ name }}</th>{% endfor %}</tr></thead><tbody>
+<tr><th>Trạng thái</th>{% for key, name in platforms %}{% set r = report.platforms[key] %}<td><strong>{{ r.status }}</strong>{% if r.reason %}<div class="small">{{ r.reason }}</div>{% endif %}</td>{% endfor %}</tr>
+<tr><th>Chế độ đo</th>{% for key, name in platforms %}<td>{{ report.platforms[key].get('measurement_mode', 'Chưa đo') }}</td>{% endfor %}</tr>
+<tr><th>Phiên bản</th>{% for key, name in platforms %}<td>{{ report.platforms[key].get('version', 'Chưa ghi nhận') }}</td>{% endfor %}</tr>
+<tr><th>Dấu xác nhận episode</th>{% for key, name in platforms %}{% set m = report.platforms[key].metrics %}<td>{% if m %}{{ m.markers_seen }}/{{ m.markers_expected }}{% else %}Chưa đo{% endif %}</td>{% endfor %}</tr>
+{% for metric in ['tp', 'fp', 'fn', 'tn'] %}<tr><th>{{ metric|upper }} (episode × luật)</th>{% for key, name in platforms %}{% set m = report.platforms[key].metrics %}<td>{{ m.counts[metric] if m else 'Chưa đo' }}</td>{% endfor %}</tr>{% endfor %}
+{% for metric in ['precision', 'recall', 'f1'] %}<tr><th>{{ metric|capitalize }} hành vi</th>{% for key, name in platforms %}{% set r = report.platforms[key] %}{% set m = r.metrics %}<td>{% if m and m[metric] is not none %}{{ '%.4f'|format(m[metric]) }}{% if r.status != 'measured' %} (tạm){% endif %}{% elif m %}Không xác định{% else %}Chưa đo{% endif %}</td>{% endfor %}</tr>{% endfor %}
+</tbody></table></div>
+{% for key, name in platforms %}
+{% set r = report.platforms[key] %}
+{% if r.metrics %}
+<details class="card mb-3"><summary class="card-header">{{ name }} · Kết quả theo luật và kịch bản</summary><div class="card-body">
+  <p class="small">Lần chạy: {{ r.run_id }} · Thời điểm: {{ r.started_at }} · Trạng thái: {{ r.status }}</p>
+  <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Luật</th><th>TP</th><th>FP</th><th>FN</th><th>TN</th></tr></thead><tbody>
+  {% for code, counts in r.metrics.per_rule.items() %}<tr><td>{{ code }}</td><td>{{ counts.tp }}</td><td>{{ counts.fp }}</td><td>{{ counts.fn }}</td><td>{{ counts.tn }}</td></tr>{% endfor %}
+  </tbody></table></div>
+  <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Kịch bản</th><th>Luật kỳ vọng</th><th>Luật quan sát</th><th>Dấu xác nhận</th><th>Khớp kết quả</th></tr></thead><tbody>
+  {% for episode in r.metrics.episodes %}<tr><td>{{ episode.episode_id }}</td><td>{{ episode.expected|join(', ') or 'Không cảnh báo' }}</td><td>{{ episode.observed|join(', ') or 'Không cảnh báo' }}</td><td>{{ 'Có' if episode.marker_seen else 'Thiếu' }}</td><td>{{ 'Khớp' if episode.exact_match else 'Khác' }}</td></tr>{% endfor %}
+  </tbody></table></div>
+</div></details>
+{% endif %}
+{% endfor %}
+<details><summary>Checksum dataset</summary><code>{{ report.manifest.events_sha256 }}</code></details>
+{% endif %}
+{% endblock %}

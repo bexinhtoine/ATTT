@@ -13,6 +13,7 @@ Dành cho GIAO DIỆN (xác thực bằng phiên đăng nhập):
     POST /api/v1/alerts/<id>/status       đổi trạng thái cảnh báo
 """
 import platform
+import json
 from datetime import datetime, timedelta
 from functools import wraps
 
@@ -24,6 +25,8 @@ from .ingest import ingest
 from .auth import login_required, role_required, audit
 from . import stats as stats_mod
 from .parsers import parse_iso
+from .time_inputs import parse_form_datetime
+from .platforms import platform_view
 
 bp = Blueprint("api", __name__, url_prefix="/api/v1")
 
@@ -57,38 +60,33 @@ def agent_auth(view):
     return wrapped
 
 
-def _trigger_ai(alerts):
-    """Tự động phân loại các cảnh báo MỚI bằng tác tử AI (luồng nền)."""
-    if not current_app.config.get("AI_AUTO_TRIAGE", True):
-        return 0
-    orch = current_app.extensions.get("soc_orchestrator")
-    n = 0
-    for alert, is_new in alerts:
-        if is_new and orch is not None:
-            orch.run_async(alert.id, ("enrich", "triage"), trigger="auto")
-            n += 1
-    return n
-
-
 # ------------------------------------------------------------------ agent API
 @bp.post("/agents/register")
 def register_agent():
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return {"error": "Body phải là object"}, 400
     if data.get("enrollment_token") != current_app.config["ENROLLMENT_TOKEN"]:
         audit("agent_register_denied", data.get("hostname"), "Sai enrollment token", success=False)
         return jsonify({"error": "Enrollment token không đúng"}), 403
+    if not isinstance(data.get("hostname", ""), str):
+        return {"error": "hostname phải là chuỗi"}, 400
     hostname = (data.get("hostname") or "").strip()[:128]
     if not hostname:
         return jsonify({"error": "Thiếu hostname"}), 400
     agent = Agent.query.filter_by(hostname=hostname).first()
     created = agent is None
+    if agent is not None:
+        key = request.headers.get("X-API-Key") or ""
+        if not key or Agent.hash_key(key) != agent.api_key_hash:
+            return {"error": "Hostname đã đăng ký; cần API key hiện tại hoặc quản trị viên cấp lại khóa."}, 409
     if created:
         agent = Agent(hostname=hostname)
         db.session.add(agent)
-    agent.os_type = (data.get("os_type") or "other")[:32]
-    agent.os_version = (data.get("os_version") or "")[:128]
-    agent.ip_address = (data.get("ip_address") or request.remote_addr or "")[:64]
-    agent.agent_version = (data.get("agent_version") or "")[:32]
+    agent.os_type = str(data.get("os_type") or "other")[:32]
+    agent.os_version = str(data.get("os_version") or "")[:128]
+    agent.ip_address = str(data.get("ip_address") or request.remote_addr or "")[:64]
+    agent.agent_version = str(data.get("agent_version") or "")[:32]
     agent.collectors = dumps(data.get("collectors") or [])
     agent.status = "online"
     agent.last_seen = utcnow()
@@ -108,18 +106,23 @@ def post_logs():
     if not isinstance(events, list):
         return jsonify({"error": "Body phải là {\"events\": [...]}"}), 400
     result = ingest(g.agent, events)
-    ai_started = _trigger_ai(result["alerts"])
+    ai_started = result["ai_started"]
     return jsonify({"received": result["received"], "accepted": result["accepted"],
                     "duplicates": result["duplicates"], "rejected": result["rejected"],
                     "alerts_new": sum(1 for _, n in result["alerts"] if n),
                     "alerts_updated": sum(1 for _, n in result["alerts"] if not n),
-                    "ai_started": ai_started, "server_time": utcnow().isoformat() + "Z"})
+                    "ai_started": ai_started, "receipts": result["receipts"], "deferred": result["deferred"],
+                    "detection_job_id": result.get("detection_job_id"),
+                    "detection_pending": result.get("detection_pending", False),
+                    "server_time": utcnow().isoformat() + "Z"})
 
 
 @bp.post("/agents/heartbeat")
 @agent_auth
 def heartbeat():
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return {"error": "Body phải là object"}, 400
     g.agent.last_seen = utcnow()
     g.agent.status = "online"
     if data.get("metrics"):
@@ -169,7 +172,7 @@ def apply_event_filters(q, args):
                             LogEvent.process_name.ilike(like), LogEvent.user_name.ilike(like)))
     for key, op in (("from", "ge"), ("to", "le")):
         if args.get(key):
-            dt = parse_iso(args[key])
+            dt = parse_form_datetime(args[key], current_app.config.get("TIMEZONE", "Asia/Ho_Chi_Minh"))
             if dt:
                 dt = dt.replace(tzinfo=None)
                 q = q.filter(LogEvent.event_time >= dt if op == "ge" else LogEvent.event_time <= dt)
@@ -190,6 +193,7 @@ def get_events():
 
 @bp.post("/alerts/<int:alert_id>/ai/<stage>")
 @role_required("admin", "analyst")
+@platform_view('alerts')
 def run_ai(alert_id, stage):
     alert = db.session.get(Alert, alert_id)
     if alert is None:
@@ -207,21 +211,56 @@ def run_ai(alert_id, stage):
 
 @bp.post("/alerts/<int:alert_id>/status")
 @role_required("admin", "analyst")
+@platform_view('alerts')
 def set_alert_status(alert_id):
     alert = db.session.get(Alert, alert_id)
     if alert is None:
         return jsonify({"error": "Không tìm thấy cảnh báo"}), 404
     data = request.get_json(silent=True) or request.form
+    if not hasattr(data, "get"):
+        return {"error": "Body phải là object"}, 400
+    expected = data.get("expected_updated_at")
+    if expected and expected != alert.updated_at.isoformat():
+        return {"error": "Cảnh báo đã thay đổi; hãy tải lại trước khi cập nhật."}, 409
     status = data.get("status")
     if status not in ALERT_STATUSES:
         return jsonify({"error": "Trạng thái không hợp lệ"}), 400
+    from .reviews import claim_alert_revision
+    if not claim_alert_revision(alert):
+        db.session.rollback()
+        return {"error": "Cảnh báo đã thay đổi; hãy tải lại trước khi cập nhật."}, 409
+    if data.get("priority") is not None:
+        priority = _int(data.get("priority"))
+        if priority not in (1, 2, 3, 4, 5):
+            return {"error": "priority phải từ 1 đến 5"}, 400
+        alert.priority = priority
     alert.status = status
     if data.get("note"):
         alert.resolution_note = data.get("note")
     if status in ("resolved", "false_positive"):
         alert.resolved_at = utcnow()
         alert.resolved_by = g.user.id
+    else:
+        alert.resolved_at = alert.resolved_by = None
     alert.updated_at = utcnow()
+    from .reviews import record_alert_review
+    record_alert_review(alert, g.user.username)
     db.session.commit()
     audit("alert_status", "alert:%d" % alert_id, status)
     return jsonify({"ok": True, "alert": alert.to_dict()})
+
+
+@bp.get("/health")
+@login_required
+def health():
+    from .models import WorkJob
+    counts = dict(db.session.query(WorkJob.status, db.func.count(WorkJob.id)).group_by(WorkJob.status).all())
+    oldest = WorkJob.query.filter_by(status="queued").order_by(WorkJob.created_at).first()
+    return {"version": "1.2.0", "jobs": counts,
+            "oldest_queued_seconds": max(0, int((utcnow() - oldest.created_at).total_seconds())) if oldest else 0,
+            "worker_alive": bool(current_app.extensions.get("soc_worker") and
+                                 current_app.extensions["soc_worker"].is_alive()),
+            "failed_job_ids": [j.id for j in WorkJob.query.filter_by(status="failed").limit(20)],
+            "agents": [{"hostname": a.hostname, "status": a.status,
+                        "metrics": json.loads(a.metrics or "{}")}
+                       for a in Agent.query.order_by(Agent.id).all()]}

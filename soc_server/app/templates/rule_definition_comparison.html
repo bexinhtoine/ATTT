@@ -1,0 +1,9 @@
+<section class="mb-4">
+<h5>Đối chiếu điều kiện của 21 luật trong bài thử</h5>
+<p>Đây là các luật được cấu hình để thử cùng nhóm hành vi; không đại diện toàn bộ bộ luật của Elastic hoặc Wazuh. Luật SOC đọc từ CSDL hiện tại; hai nền tảng ngoài dùng tệp cấu hình đã xuất trong lượt thử. Cấu hình có thể khác thời điểm.</p>
+<p><strong>Khác biệt đáng kiểm tra:</strong> luật đếm Elastic trong bản cấu hình dùng thời gian tiếp nhận, còn SOC tính theo thời gian sự kiện. R17 trên Wazuh nối nhánh SSH thất bại và yêu cầu khác tài khoản; SOC/Elastic còn nhận trường hợp tên không tồn tại. R19 của SOC nhận log web thất bại, trong khi cấu hình ngoài lọc riêng hành vi không tìm thấy trang.</p>
+<div class="table-responsive"><table class="table table-bordered bg-white" style="min-width:1000px"><thead><tr><th>Luật</th>{% for key in results %}<th>{{ platform_choices[key] }} · cách kiểm tra</th>{% endfor %}</tr></thead><tbody>
+{% for code,definitions in rule_definitions.items()|sort %}<tr><th>{{ code }}</th>{% for key in results %}{% set definition = definitions[key] %}<td style="min-width:250px">{{ definition.explanation }}<details class="mt-2"><summary>Xem điều kiện và nguồn</summary><p class="small mt-2">{{ definition.origin }}</p><pre class="small text-wrap">{{ definition.config|pretty_json }}</pre></details></td>{% endfor %}</tr>{% endfor %}
+</tbody></table></div>
+<p><a href="{{ url_for('main.comparison', platform='all') }}">Xem luật nào đã có cảnh báo và mở log bằng chứng</a></p>
+</section>

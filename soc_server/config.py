@@ -50,7 +50,16 @@ class Config:
 
     # Module Agentic AI (Claude API). Không có khóa -> tự chuyển sang chế độ suy luận cục bộ.
     ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
-    AI_MODEL = os.environ.get("SOC_AI_MODEL", "claude-opus-5-5")
+    OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+    AI_PROVIDER = os.environ.get("SOC_AI_PROVIDER", "anthropic")
+    AI_MODEL = os.environ.get("SOC_AI_MODEL", "gpt-4.1-mini" if AI_PROVIDER == "openai" else "claude-opus-5-5")
     AI_AUTO_TRIAGE = os.environ.get("SOC_AI_AUTO_TRIAGE", "1") == "1"
     AI_MAX_TOOL_ITERATIONS = 8
+    AI_MAX_TOOL_CALLS = 24
+    AI_TOOL_BUDGET_SECONDS = 240
     AI_EFFORT = os.environ.get("SOC_AI_EFFORT", "medium")
+    WORK_LEASE_SECONDS = 120
+    WORK_MAX_ATTEMPTS = 3
+    DETECTION_CANDIDATE_LIMIT = 5000
+    COMPARISON_REPORT_PATH = os.environ.get("SOC_COMPARISON_REPORT_PATH")
+    PLATFORM_RESULTS_DIR = os.environ.get("SOC_PLATFORM_RESULTS_DIR")

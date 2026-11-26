@@ -4,15 +4,33 @@ __pycache__/
 .venv/
 venv/
 
+# Local coursework, experiments, reports, datasets and generated output
+/BaiTap/
+/benchmarks/
+/docs/
+/final_dataset/
+/output/
+
+# Local editor/agent settings and unrelated model experiments
+/.codex/
+/.vscode/
+/a.ipynb
+/yolov8n-seg.pt
+
+# Imported comparison evidence is local runtime data
+/soc_server/instance/real_comparison.json
+
 # Cơ sở dữ liệu runtime của Web SOC (tạo lại bằng run.py / tools/rebuild_demo.py)
 soc_server/instance/*.db
 soc_server/instance/*.db-wal
 soc_server/instance/*.db-shm
 soc_server/instance/*.bak
+soc_server/instance/platform_results/
 
 # Trạng thái và hàng đợi của SOC Agent (chứa API key)
 soc_agent/agent_state.json
 soc_agent/agent_spool.json
+soc_agent/agent.lock
 soc_agent/config.json
 
 # Tệp khóa của Word / tạm
@@ -20,3 +38,7 @@ soc_agent/config.json
 *.tmp
 .DS_Store
 Thumbs.db
+
+# Dedicated comparison lab: credentials and official vendor checkout
+benchmarks/three_way/lab/.env
+benchmarks/three_way/lab/vendor/

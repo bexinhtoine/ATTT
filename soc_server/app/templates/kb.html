@@ -19,6 +19,7 @@
       <span class="badge {{ 'bg-info text-dark' if a.source == 'ai' else 'bg-light text-dark border' }}">{{ 'AI' if a.source == 'ai' else 'Analyst' }}</span></div>
     <div class="small text-muted mb-2">{{ a.category }} · {{ a.updated_at|localtime }} · dùng {{ a.times_used }} lần{% if a.related_alert_id %} · từ cảnh báo <a href="{{ url_for('main.alert_detail', alert_id=a.related_alert_id) }}">#{{ a.related_alert_id }}</a>{% endif %}</div>
     <p class="small mb-2">{{ (a.summary or '')[:220] }}{{ '…' if (a.summary or '')|length > 220 }}</p>
+    <div class="small mb-2"><span class="badge {{ 'bg-success' if a.review_status == 'approved' else 'bg-warning text-dark' }}">{{ 'Đã duyệt' if a.review_status == 'approved' else 'Bản nháp' }}</span></div>
     {% for t in a.tag_list %}<span class="badge bg-secondary">{{ t }}</span> {% endfor %}
   </div></div></div>
   {% else %}<div class="col-12 text-muted text-center py-4">Chưa có bài tri thức nào.</div>{% endfor %}

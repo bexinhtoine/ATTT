@@ -5,13 +5,13 @@
 <div class="row g-3">
   <div class="col-lg-6"><div class="card h-100"><div class="card-header">Module Agentic AI</div><div class="card-body small">
     <table class="table table-sm mb-2"><tbody>
-      <tr><th style="width: 220px">Trạng thái</th><td>{% if llm.available %}<span class="badge bg-success">Claude API khả dụng</span>{% else %}<span class="badge bg-secondary">Chế độ suy luận cục bộ</span> <span class="text-muted">({{ llm.unavailable_reason }})</span>{% endif %}</td></tr>
+      <tr><th style="width: 220px">Trạng thái</th><td>{% if llm.available %}<span class="badge bg-success">Đã cấu hình {{ cfg.AI_PROVIDER }} (chưa kiểm tra kết nối)</span>{% else %}<span class="badge bg-secondary">Chế độ heuristic cục bộ</span> <span class="text-muted">({{ llm.unavailable_reason }})</span>{% endif %}</td></tr>
       <tr><th>Mô hình</th><td><code>{{ llm.model }}</code></td></tr>
       <tr><th>Mức nỗ lực suy luận (effort)</th><td>{{ cfg.AI_EFFORT }}</td></tr>
       <tr><th>Tự động phân loại cảnh báo mới</th><td>{{ 'Bật' if cfg.AI_AUTO_TRIAGE else 'Tắt' }}</td></tr>
       <tr><th>Số vòng gọi công cụ tối đa</th><td>{{ cfg.AI_MAX_TOOL_ITERATIONS }}</td></tr>
     </tbody></table>
-    <p class="text-muted mb-0">Đặt biến môi trường <code>ANTHROPIC_API_KEY</code> trước khi khởi động server để bật đường LLM; <code>SOC_AI_MODEL</code>, <code>SOC_AI_EFFORT</code>, <code>SOC_AI_AUTO_TRIAGE</code> để tinh chỉnh.</p>
+    <p class="text-muted mb-0">Dùng OpenAI: đặt <code>SOC_AI_PROVIDER=openai</code> và <code>OPENAI_API_KEY</code>. Dùng Claude: đặt <code>SOC_AI_PROVIDER=anthropic</code> và <code>ANTHROPIC_API_KEY</code>. Chọn mô hình bằng <code>SOC_AI_MODEL</code>. Chưa có khóa vẫn dùng heuristic, không cần train model.</p>
   </div></div></div>
   <div class="col-lg-6"><div class="card h-100"><div class="card-header">Thu thập & lưu trữ</div><div class="card-body small">
     <table class="table table-sm mb-0"><tbody>

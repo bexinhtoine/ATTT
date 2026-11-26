@@ -1,0 +1,13 @@
+<section class="mt-4">
+<h5>Nền tảng nào tốt hơn theo kết quả đã có?</h5>
+<p><strong>Về số nhóm luật đã có cảnh báo trong lượt này:</strong> Agentic SOC có {{ comparison_summary.soc.detected }}/{{ comparison_rows|length }}, Elastic có {{ comparison_summary.elastic.detected }}/{{ comparison_rows|length }}, Wazuh có {{ comparison_summary.wazuh.detected }}/{{ comparison_rows|length }}. Đây là số nhóm hành vi có bằng chứng cảnh báo trong bộ thử; chưa phải tỷ lệ phát hiện đúng trên mọi loại hoạt động.</p>
+<div class="table-responsive"><table class="table table-bordered bg-white"><thead><tr><th>Tiêu chí đánh giá</th><th>Hiện đã biết gì?</th><th>Có thể kết luận gì?</th></tr></thead><tbody>
+<tr><th>Nhận đủ dữ liệu</th><td>Cả ba có {{ report.events }} log chung; bản xuất đối chiếu mã và nội dung gốc.</td><td>Đối chiếu chỉ số thiếu và nội dung khác ở phần số liệu tổng. Lượt này chưa cho thấy nền tảng nào tốt hơn về thu log độc lập.</td></tr>
+<tr><th>Có cảnh báo cho hành vi thử</th><td>SOC: {{ comparison_summary.soc.detected }} nhóm; Elastic: {{ comparison_summary.elastic.detected }} nhóm; Wazuh: {{ comparison_summary.wazuh.detected }} nhóm. Các dòng luật ghi rõ trạng thái và bằng chứng.</td><td>Số nhóm có cảnh báo cho thấy mức bao phủ trong chính lượt thử. Cần kiểm tra điều kiện khác nhau trước khi quy thành ưu thế của sản phẩm.</td></tr>
+<tr><th>Luật có cùng điều kiện</th><td>Có khác biệt về nguồn, hành vi, khoảng thời gian và cách đếm; mở từng cấu hình để xem.</td><td>Chưa phải phép đo ba bộ luật hoàn toàn tương đương.</td></tr>
+<tr><th>Phát hiện đúng và báo nhầm</th><td>Chưa có đủ hoạt động bình thường và nhãn độc lập để chấm ba nền tảng trên cùng bộ dữ liệu thật.</td><td>Chưa xếp hạng độ chính xác, tỷ lệ bỏ sót hoặc báo nhầm. Số cảnh báo không thay cho các chỉ số này.</td></tr>
+<tr><th>Tốc độ và tài nguyên</th><td>Hai hệ thống ngoài chạy lần lượt; thời gian gửi lại log được rút ngắn.</td><td>Chưa xếp hạng tốc độ, RAM hoặc khả năng chịu tải.</td></tr>
+<tr><th>Hỗ trợ người phân tích</th><td>SOC đã thử xử lý cảnh báo, hồ sơ, tri thức và phân tích cục bộ. Chưa thử cùng quy trình trên giao diện gốc của hai sản phẩm còn lại.</td><td>Xác nhận phần SOC đã làm được; chưa kết luận SOC tốt hơn về toàn bộ nghiệp vụ.</td></tr>
+</tbody></table></div>
+<p>Muốn xếp hạng chắc chắn, cần dùng cùng log gốc và tình huống bình thường, thống nhất điều kiện luật, chấm từng cảnh báo đúng/sai và đo độ trễ, tài nguyên trên cùng mức tải. Bộ thử tổng hợp trước đây có trang đánh giá riêng và không được trộn với kết quả máy thật này.</p>
+</section>

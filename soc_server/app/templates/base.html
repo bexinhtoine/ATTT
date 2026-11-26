@@ -7,7 +7,7 @@
   <title>{% block title %}Agentic SOC Platform{% endblock %}</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
-  <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+  <link href="{{ url_for('static', filename='css/style.css', v='20261125-3') }}" rel="stylesheet">
   <style>
     .badge.sev-critical{background:#dc3545}.badge.sev-high{background:#fd7e14}.badge.sev-medium{background:#0dcaf0;color:#000}
     .badge.sev-low{background:#6c757d}.badge.sev-info{background:#e9ecef;color:#333;border:1px solid #ccc}
@@ -21,28 +21,37 @@
   <div class="row">
     {% if current_user %}
     <nav class="col-md-3 col-lg-2 sidebar p-3 d-flex flex-column">
-      <div class="brand mb-4 px-2">
+      <div class="brand mb-3 px-2">
         <i class="bi bi-shield-shaded text-info"></i> Agentic SOC<br><small>Platform v{{ app_version }}</small>
       </div>
       {% set ep = request.endpoint or '' %}
-      <ul class="nav nav-pills flex-column gap-1">
+      <div class="sidebar-menu">
+      <ul class="nav nav-pills flex-column" aria-label="Điều hướng chính">
         <li><a class="nav-link {{ 'active' if ep == 'main.dashboard' }}" href="{{ url_for('main.dashboard') }}"><i class="bi bi-speedometer2"></i> Dashboard</a></li>
-        <li><a class="nav-link {{ 'active' if ep.startswith('main.alert') }}" href="{{ url_for('main.alerts', open=1) }}"><i class="bi bi-exclamation-triangle"></i> Cảnh báo</a></li>
+        <li class="sidebar-section">Giám sát</li>
+        <li><a class="nav-link {{ 'active' if ep.startswith('main.alert') }}" href="{{ url_for('main.alerts', open=1 if selected_platform == 'soc' else '') }}"><i class="bi bi-exclamation-triangle"></i> Cảnh báo</a></li>
         <li><a class="nav-link {{ 'active' if ep.startswith('main.log') }}" href="{{ url_for('main.logs') }}"><i class="bi bi-journal-text"></i> Nhật ký log</a></li>
         <li><a class="nav-link {{ 'active' if ep.startswith('main.agent') }}" href="{{ url_for('main.agents') }}"><i class="bi bi-hdd-network"></i> Máy trạm (Agent)</a></li>
         <li><a class="nav-link {{ 'active' if ep.startswith('main.rule') }}" href="{{ url_for('main.rules') }}"><i class="bi bi-funnel"></i> Luật phát hiện</a></li>
-        <li><a class="nav-link {{ 'active' if ep.startswith('main.kb') }}" href="{{ url_for('main.kb') }}"><i class="bi bi-book"></i> Cơ sở tri thức</a></li>
-        <li><a class="nav-link {{ 'active' if ep == 'main.reports' }}" href="{{ url_for('main.reports') }}"><i class="bi bi-bar-chart-line"></i> Báo cáo & thống kê</a></li>
+        <li class="sidebar-section">Điều tra</li>
+        <li><a class="nav-link {{ 'active' if ep.startswith('incidents.') }}" href="{{ url_for('incidents.index') }}"><i class="bi bi-folder2-open"></i> Hồ sơ sự cố</a></li>
         <li><a class="nav-link {{ 'active' if ep.startswith('main.ip_reputation') }}" href="{{ url_for('main.ip_reputation') }}"><i class="bi bi-globe2"></i> Uy tín IP</a></li>
+        <li><a class="nav-link {{ 'active' if ep.startswith('main.kb') }}" href="{{ url_for('main.kb') }}"><i class="bi bi-book"></i> Cơ sở tri thức</a></li>
+        <li class="sidebar-section">Báo cáo</li>
+        <li><a class="nav-link {{ 'active' if ep == 'main.reports' }}" href="{{ url_for('main.reports') }}"><i class="bi bi-bar-chart-line"></i> Báo cáo & thống kê</a></li>
+        <li><a class="nav-link {{ 'active' if ep == 'main.comparison' }}" href="{{ url_for('main.comparison') }}"><i class="bi bi-layout-three-columns"></i> So sánh 3 nền tảng</a></li>
         {% if current_user.role in ('admin', 'analyst') %}
+        <li class="sidebar-section">Quản trị</li>
+        <li><a class="nav-link {{ 'active' if ep == 'main.operations' }}" href="{{ url_for('main.operations') }}"><i class="bi bi-activity"></i> Vận hành hệ thống</a></li>
         <li><a class="nav-link {{ 'active' if ep == 'main.audit_logs' }}" href="{{ url_for('main.audit_logs') }}"><i class="bi bi-clock-history"></i> Nhật ký thao tác</a></li>
-        {% endif %}
         {% if current_user.role == 'admin' %}
         <li><a class="nav-link {{ 'active' if ep.startswith('main.user') }}" href="{{ url_for('main.users') }}"><i class="bi bi-people"></i> Người dùng</a></li>
         <li><a class="nav-link {{ 'active' if ep == 'main.settings' }}" href="{{ url_for('main.settings') }}"><i class="bi bi-gear"></i> Cài đặt hệ thống</a></li>
         {% endif %}
+        {% endif %}
       </ul>
-      <div class="mt-auto pt-4 small">
+      </div>
+      <div class="sidebar-account small">
         <div class="mb-2 px-2">
           {% if ai_available %}<span class="badge bg-success"><i class="bi bi-robot"></i> AI: {{ ai_model }}</span>
           {% else %}<span class="badge bg-secondary" title="{{ ai_reason }}"><i class="bi bi-robot"></i> AI: chế độ cục bộ</span>{% endif %}
@@ -59,6 +68,24 @@
     {% else %}
     <main class="col-12 p-0">
     {% endif %}
+      {% if current_user %}
+      <div class="card mb-4" id="platform-selector">
+        <div class="card-body d-flex flex-wrap align-items-center gap-3 py-3">
+          <form method="get" action="{{ url_for(platform_switch_endpoint) }}" class="d-flex flex-wrap align-items-center gap-2">
+            {% for key, values in platform_switch_args.items() %}{% for value in values %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}{% endfor %}
+            <label for="result-platform" class="fw-semibold">Nền tảng xem kết quả</label>
+            <select id="result-platform" name="platform" class="form-select form-select-sm w-auto">
+              {% for key, label in platform_choices.items() %}<option value="{{ key }}" {{ 'selected' if selected_platform == key }}>{{ label }}</option>{% endfor %}
+            </select>
+            <button class="btn btn-primary btn-sm" type="submit">Xem kết quả</button>
+          </form>
+          {% if selected_platform != 'all' and (platform_feature or request.endpoint == 'main.comparison') %}<a class="btn btn-outline-primary btn-sm" href="{{ url_for(platform_switch_endpoint, platform='all') }}">So sánh cả 3 tại mục này</a>{% endif %}
+          {% if not platform_feature and request.endpoint != 'main.comparison' %}<span class="small text-muted">Quản trị ứng dụng</span>{% endif %}
+          {% if current_user.role == 'admin' %}<a class="small ms-auto" href="{{ url_for('platforms.import_page') }}">Nhập kết quả nền tảng</a>{% endif %}
+        </div>
+      </div>
+      {% if not platform_feature and request.endpoint != 'main.comparison' %}<p class="small text-muted">Tài khoản, cấu hình và nhật ký thao tác tại đây thuộc Web SOC. Bộ chọn nền tảng không đổi quyền hoặc cấu hình của Elastic và Wazuh; các phần đó chưa được kiểm thử quản trị chung trong đề tài.</p>{% endif %}
+      {% endif %}
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% for cat, msg in messages %}
           <div class="alert alert-{{ 'danger' if cat == 'error' else cat }} alert-dismissible fade show py-2" role="alert">

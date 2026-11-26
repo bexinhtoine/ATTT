@@ -304,6 +304,53 @@ class Alert(db.Model):
                 "resolution_note": self.resolution_note}
 
 
+INCIDENT_STATUSES = {"new": "Mới", "investigating": "Đang điều tra", "resolved": "Đã xử lý", "closed": "Đã đóng"}
+
+
+class Incident(db.Model):
+    __tablename__ = "incidents"
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(255), nullable=False)
+    summary = db.Column(db.Text, default="")
+    status = db.Column(db.String(24), default="new", nullable=False, index=True)
+    severity = db.Column(db.String(16), default="medium", nullable=False)
+    assigned_to = db.Column(db.Integer, db.ForeignKey("users.id"))
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+    version = db.Column(db.Integer, default=1, nullable=False)
+    merged_into_id = db.Column(db.Integer, db.ForeignKey("incidents.id"))
+    assignee = db.relationship("User")
+    links = db.relationship("IncidentAlert", back_populates="incident", cascade="all, delete-orphan")
+    activities = db.relationship("IncidentActivity", back_populates="incident", order_by="IncidentActivity.id.desc()")
+
+    @property
+    def status_label(self):
+        return INCIDENT_STATUSES.get(self.status, self.status)
+
+
+class IncidentAlert(db.Model):
+    __tablename__ = "incident_alerts"
+    # Each alert belongs to at most one incident. Moving it requires an explicit merge/split.
+    alert_id = db.Column(db.Integer, db.ForeignKey("alerts.id"), primary_key=True)
+    incident_id = db.Column(db.Integer, db.ForeignKey("incidents.id"), nullable=False, index=True)
+    reason = db.Column(db.Text, nullable=False)
+    linked_by = db.Column(db.String(64), nullable=False)
+    linked_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+    incident = db.relationship("Incident", back_populates="links")
+    alert = db.relationship("Alert", backref=db.backref("incident_link", uselist=False))
+
+
+class IncidentActivity(db.Model):
+    __tablename__ = "incident_activities"
+    id = db.Column(db.Integer, primary_key=True)
+    incident_id = db.Column(db.Integer, db.ForeignKey("incidents.id"), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+    username = db.Column(db.String(64), nullable=False)
+    action = db.Column(db.String(32), nullable=False)
+    detail = db.Column(db.Text, nullable=False)
+    incident = db.relationship("Incident", back_populates="activities")
+
+
 class Investigation(db.Model):
     __tablename__ = "investigations"
     id = db.Column(db.Integer, primary_key=True)
@@ -360,6 +407,11 @@ class KnowledgeArticle(db.Model):
     times_used = db.Column(db.Integer, default=0)
 
     related_alert = db.relationship("Alert", backref=db.backref("knowledge_articles", lazy="dynamic"))
+    review = db.relationship("KnowledgeReview", uselist=False, cascade="all, delete-orphan", back_populates="article")
+
+    @property
+    def review_status(self):
+        return self.review.status if self.review else ("approved" if self.source == "manual" else "draft")
 
     @property
     def tag_list(self):
@@ -426,3 +478,42 @@ class IpReputation(db.Model):
 
     def to_dict(self):
         return {"ip": self.ip, "verdict": self.verdict, "source": self.source, "note": self.note}
+
+
+class AlertReview(db.Model):
+    """Separate analyst decisions from AI suggestions without altering legacy tables."""
+    __tablename__ = "alert_reviews"
+    alert_id = db.Column(db.Integer, db.ForeignKey("alerts.id", ondelete="CASCADE"), primary_key=True)
+    revision = db.Column(db.Integer, nullable=False, default=1)
+    reviewed_by = db.Column(db.String(64), nullable=False)
+    reviewed_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    decision = db.Column(db.Text, nullable=False)
+
+
+class KnowledgeReview(db.Model):
+    __tablename__ = "knowledge_reviews"
+    article_id = db.Column(db.Integer, db.ForeignKey("knowledge_articles.id", ondelete="CASCADE"), primary_key=True)
+    status = db.Column(db.String(16), nullable=False, default="draft")
+    revision = db.Column(db.Integer, nullable=False, default=1)
+    reviewed_by = db.Column(db.String(64))
+    reviewed_at = db.Column(db.DateTime)
+    article = db.relationship("KnowledgeArticle", back_populates="review")
+
+
+class WorkJob(db.Model):
+    """Durable ingest/detection and background AI work, with recoverable leases."""
+    __tablename__ = "work_jobs"
+    id = db.Column(db.Integer, primary_key=True)
+    kind = db.Column(db.String(24), nullable=False, index=True)
+    object_id = db.Column(db.Integer, index=True)
+    payload = db.Column(db.Text, nullable=False, default="{}")
+    status = db.Column(db.String(16), nullable=False, default="queued", index=True)
+    attempts = db.Column(db.Integer, nullable=False, default=0)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    started_at = db.Column(db.DateTime)
+    finished_at = db.Column(db.DateTime)
+    available_at = db.Column(db.DateTime, nullable=False, default=utcnow, index=True)
+    lease_until = db.Column(db.DateTime)
+    lease_token = db.Column(db.String(36))
+    error = db.Column(db.Text)
+    result = db.Column(db.Text)

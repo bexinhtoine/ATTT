@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Vận hành hệ thống{% endblock %}
+{% block content %}
+<h4>Vận hành và phục hồi tác vụ</h4>
+<p>Worker: <strong>{{ 'đang chạy' if worker_alive else 'chưa chạy trong tiến trình này' }}</strong></p>
+<div class="mb-3">{% for status, count in counts.items() %}<span class="badge bg-secondary me-2">{{ status }}: {{ count }}</span>{% endfor %}</div>
+<div class="table-responsive"><table class="table table-sm"><thead><tr><th>ID</th><th>Loại</th><th>Trạng thái</th><th>Lần thử</th><th>Tạo lúc</th><th>Lỗi gần nhất</th><th></th></tr></thead><tbody>
+{% for job in jobs %}<tr><td>#{{ job.id }}</td><td>{{ job.kind }}</td><td>{{ job.status }}</td><td>{{ job.attempts }}</td><td>{{ job.created_at|localtime }}</td><td>{{ job.error or '-' }}</td><td>{% if job.status == 'failed' %}<form method="post" action="{{ url_for('main.retry_job', job_id=job.id) }}">{{ csrf_field() }}<button class="btn btn-sm btn-outline-primary">Thử lại</button></form>{% endif %}</td></tr>
+{% else %}<tr><td colspan="7">Chưa có tác vụ.</td></tr>{% endfor %}</tbody></table></div>
+<p class="small text-muted">100 tác vụ gần nhất.</p>
+{% endblock %}

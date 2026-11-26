@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}{{ feature_spec[0] }} · {{ platform_choices[selected_platform] }}{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <h4 class="mb-0">{{ feature_spec[0] }} · {{ platform_choices[selected_platform] }}</h4>
+  <a href="{{ url_for('main.comparison', platform='all') }}" class="btn btn-outline-primary btn-sm">So sánh luật và kết quả phát hiện</a>
+  {% if feature in ('alerts', 'logs') %}<a class="btn btn-outline-success btn-sm" href="{{ url_for('main.' + feature + '_export', platform=selected_platform, q=request.args.get('q', ''), severity=request.args.get('severity', ''), status=request.args.get('status', ''), host=request.args.get('host', ''), open=request.args.get('open', '')) }}">Xuất CSV</a>{% endif %}
+</div>
+{% include 'feature_comparison_guide.html' %}
+{% if feature == 'rules' %}{% include 'rule_definition_comparison.html' %}{% endif %}
+{% if selected_platform == 'all' %}
+<div class="row g-3 mb-4">
+{% for key, result in results.items() %}
+<div class="col-xl-4"><div class="card h-100 border-top border-3 {{ 'border-primary' if result.status in ('available', 'partial') else 'border-secondary' }}">
+  <div class="card-body">
+    <h5>{{ platform_choices[key] }}</h5>
+    <span class="badge {{ 'bg-success' if result.status == 'available' else 'bg-warning text-dark' }}">{{ platform_status_labels[result.status] }}</span>
+    {% for label, value in result.display_summary.items() %}<div class="d-flex justify-content-between gap-3 mt-2"><span>{{ label }}</span><strong>{{ value if value is not none else 'Chưa đo' }}</strong></div>{% endfor %}
+    {% if result.total is not none %}<div class="small mt-2">Tổng bản ghi: {{ result.total }}</div>{% endif %}
+    <a class="btn btn-outline-primary btn-sm mt-3" href="{{ url_for(feature_spec[1], platform=key) }}">Chỉ xem {{ platform_choices[key] }}</a>
+  </div>
+</div></div>
+{% endfor %}
+</div>
+{% endif %}
+{% if feature_spec[2] and results.values()|selectattr('status', 'in', ['available', 'partial'])|list %}
+<form class="row g-2 align-items-end mb-4" method="get">
+  <input type="hidden" name="platform" value="{{ selected_platform }}">
+  {% for key in ('status', 'host', 'open') %}{% if request.args.get(key) %}<input type="hidden" name="{{ key }}" value="{{ request.args[key] }}">{% endif %}{% endfor %}
+  <div class="col-md-6"><label for="platform-query" class="form-label small">Tìm kiếm</label><input id="platform-query" name="q" value="{{ request.args.get('q', '') }}" class="form-control form-control-sm" placeholder="Tiêu đề, máy, IP, mã luật..."></div>
+  <div class="col-md-3"><label for="platform-severity" class="form-label small">Mức độ</label><select name="severity" id="platform-severity" class="form-select form-select-sm"><option value="">Tất cả</option>{% for s, label in SEVERITY_LABELS.items() %}<option value="{{ s }}" {{ 'selected' if request.args.get('severity') == s }}>{{ label }}</option>{% endfor %}{% if selected_platform in ('wazuh', 'all') %}{% for level in range(17) %}<option value="{{ level }}" {{ 'selected' if request.args.get('severity') == level|string }}>Wazuh level {{ level }}</option>{% endfor %}{% endif %}</select></div>
+  <div class="col-auto"><button class="btn btn-primary btn-sm">Lọc</button></div>
+</form>
+{% endif %}
+{% for key, result in results.items() %}
+{% if selected_platform == 'all' %}<details class="card mb-4" data-result-platform="{{ key }}">
+  <summary class="card-header">Xem dữ liệu chi tiết · {{ platform_choices[key] }} · {{ platform_status_labels[result.status] }}</summary>
+{% else %}<section class="card mb-4" data-result-platform="{{ key }}">
+  <div class="card-header d-flex flex-wrap justify-content-between gap-2"><strong>{{ platform_choices[key] }} · {{ feature_spec[0] }}</strong><span>{{ platform_status_labels[result.status] }}</span></div>{% endif %}
+  <div class="card-body">
+    {% if result.reason %}<details class="small text-muted mb-3"><summary>Ghi chú nguyên bản của nguồn dữ liệu</summary><p class="mt-2">{{ result.reason }}</p></details>{% endif %}
+    {% if result.source %}<details class="small text-muted mb-3"><summary>Thông tin dữ liệu · {{ result.collected_at }}</summary><div class="mt-2">Nguồn: {{ result.source }}<br>Phạm vi: {{ result.scope }}</div></details>{% endif %}
+    {% if result.status in ('available', 'partial') %}
+      {% if selected_platform != 'all' %}<div class="d-flex flex-wrap gap-4 mb-3">{% for label, value in result.display_summary.items() %}<div><span class="text-muted">{{ label }}</span><div class="fs-4 fw-semibold">{{ value if value is not none else 'Chưa đo' }}</div></div>{% endfor %}</div>{% endif %}
+      {% if feature_spec[2] %}
+      <p class="small text-muted">Tổng {{ result.total }} · Đã tải {{ result.records|length }} · Khớp {{ result.matched }} · Trang {{ result.page }}/{{ result.pages }}.</p>
+      <div class="table-responsive"><table class="table table-sm table-hover align-middle"><thead><tr>{% for field, label in feature_spec[2] %}<th>{{ label }}</th>{% endfor %}<th>Bằng chứng</th></tr></thead><tbody>
+        {% for row in result.rows %}<tr>{% for field, label in feature_spec[2] %}<td class="text-break">{{ result_value(field, row.get(field)) }}</td>{% endfor %}<td><details><summary>Chi tiết dữ liệu gốc</summary><pre class="small text-wrap mt-2">{{ row|pretty_json }}</pre></details></td></tr>
+        {% else %}<tr><td colspan="{{ feature_spec[2]|length + 1 }}" class="text-center text-muted py-4">Không có bản ghi phù hợp.</td></tr>{% endfor %}
+      </tbody></table></div>
+      {% if result.pages > 1 %}<nav class="d-flex gap-2">{% if result.page > 1 %}<a class="btn btn-outline-secondary btn-sm" href="{{ url_for(feature_spec[1], platform=selected_platform, page=result.page-1, q=request.args.get('q', ''), severity=request.args.get('severity', '')) }}">Trang trước</a>{% endif %}{% if result.page < result.pages %}<a class="btn btn-outline-secondary btn-sm" href="{{ url_for(feature_spec[1], platform=selected_platform, page=result.page+1, q=request.args.get('q', ''), severity=request.args.get('severity', '')) }}">Trang sau</a>{% endif %}</nav>{% endif %}
+      {% endif %}
+    {% else %}<p class="text-muted mb-0">Chưa có kết quả kiểm chứng cho chức năng này trong bản tích hợp. Chưa thể kết luận nền tảng không có chức năng hoặc kết quả bằng 0.</p>{% endif %}
+  </div>
+{% if selected_platform == 'all' %}</details>{% else %}</section>{% endif %}
+{% endfor %}
+{% endblock %}

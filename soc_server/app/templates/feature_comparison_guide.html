@@ -1,0 +1,13 @@
+<section class="mb-4" aria-label="Cách so sánh chức năng">
+<h5>{{ comparison_guide.title }} — các cột khác nhau như thế nào?</h5>
+<p>Mỗi cột bên dưới nêu cách chức năng được sử dụng <strong>trong môi trường thử của đề tài</strong>. Các chức năng chưa được nối hoặc chưa thử không được chấm là không có.</p>
+<div class="table-responsive"><table class="table table-bordered bg-white" style="min-width:750px">
+<thead><tr><th scope="col" style="width:160px">Tiêu chí</th>{% for key in results %}<th scope="col">{{ platform_choices[key] }}</th>{% endfor %}</tr></thead><tbody>
+<tr><th>Cách thực hiện</th>{% for key in results %}<td>{{ comparison_guide.columns[key].description }}</td>{% endfor %}</tr>
+<tr><th>Bằng chứng hiện có</th>{% for key,result in results.items() %}<td><strong>{{ platform_status_labels[result.status] }}</strong><div class="small mt-1">{% if key == 'soc' %}Đọc trực tiếp CSDL SOC ở thời điểm mở trang.{% elif result.status in ('available','partial') %}Đọc bản kết quả đã xuất; chưa phải truy vấn trực tiếp liên tục.{% else %}Chưa có bản kết quả xác minh cho phần này.{% endif %}</div></td>{% endfor %}</tr>
+<tr><th>Phạm vi số liệu</th>{% for key in results %}<td>{% if key == 'soc' %}Toàn bộ dữ liệu nội bộ đang lưu, có thể bao gồm nhiều lượt thử.{% else %}Phạm vi của bản xuất được chọn; xem tên lượt trong thông tin nguồn bên dưới.{% endif %}</td>{% endfor %}</tr>
+<tr><th>Thời điểm</th>{% for key,result in results.items() %}<td class="small">{{ result.collected_at or 'Chưa ghi nhận' }}</td>{% endfor %}</tr>
+</tbody></table></div>
+<p><strong>Điều có thể kết luận:</strong> {{ comparison_guide.conclusion }}</p>
+{% if selected_platform == 'all' %}<p class="small text-muted">Các tổng số bên dưới phục vụ tra cứu từng nguồn. Chỉ so số lượng khi bộ dữ liệu, khoảng thời gian và đơn vị đếm giống nhau. <a href="{{ url_for('main.comparison', platform='all') }}">Mở kết quả trên cùng bộ log và tiêu chí đánh giá</a>.</p>{% endif %}
+</section>

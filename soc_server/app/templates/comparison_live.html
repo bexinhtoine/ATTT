@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}So sánh kết quả phát hiện của ba nền tảng{% endblock %}
+{% block head %}
+<style>
+.comparison-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem;margin:1rem 0}
+.comparison-summary article{background:#fff;border:1px solid #d9e1eb;border-radius:12px;padding:1.2rem}
+.comparison-summary h2{font-size:1rem;margin:0 0 .8rem}.comparison-summary strong{font-size:2rem;color:#172e4b}
+.comparison-summary p{margin:.4rem 0;font-size:.9rem}.comparison-muted{color:#526174;font-size:.86rem}
+.comparison-table{min-width:1080px;font-size:.9rem}.comparison-table th{background:#e8eef5;vertical-align:middle}
+.comparison-table td{padding:.85rem!important;vertical-align:top!important}.comparison-table .rule-name{min-width:200px;max-width:250px}
+.comparison-table .platform-cell{min-width:165px}.comparison-table .difference{min-width:250px;max-width:330px}
+.comparison-result{display:inline-block;font-weight:650;color:#17633e;background:#e8f5ed;border:1px solid #bddfca;border-radius:6px;padding:.25rem .45rem;margin-bottom:.45rem}
+.comparison-result.absent{background:#fff0d8;color:#7c4c00;border-color:#edcc92}.comparison-result.unknown{background:#edf0f4;color:#526174;border-color:#d4dce5}
+.comparison-count{display:block;font-weight:650;margin-bottom:.4rem}.comparison-evidence a{display:block;margin-top:.25rem}
+.comparison-table tr[data-different="yes"]>td:first-child{border-left:4px solid #d19a32}
+.comparison-toolbar{display:flex;gap:1rem;flex-wrap:wrap;align-items:center;margin:1rem 0}
+#comparison-empty{display:none}.comparison-explanation{max-width:1100px;line-height:1.65}
+</style>
+{% endblock %}
+{% block content %}
+<h4>So sánh kết quả phát hiện của ba nền tảng</h4>
+{% if error %}<div class="alert alert-info">{{ error }}</div>{% endif %}
+{% if report %}
+{% set choices = [('soc','Agentic SOC'),('elastic','Elastic Security'),('wazuh','Wazuh')] %}
+{% set visible = choices if selected_platform == 'all' else choices|selectattr('0','equalto',selected_platform)|list %}
+<p class="comparison-explanation">Cùng <strong>{{ report.events }} log được chọn</strong>, nền tảng nào có cảnh báo cho từng hành vi? Bảng dưới nêu kết quả, điều kiện luật và điểm khác nhau.</p>
+<p class="comparison-muted">Lượt {{ report.run_id }} · Xuất kết quả: {{ report.generated_at_local }}.<br>Kết quả đã lưu của lượt thử; không phải trạng thái đang chạy của dịch vụ.</p>
+<div class="comparison-summary">
+{% for key,name in visible %}
+<article aria-label="Tóm tắt {{ name }}"><h2>{{ name }}</h2>
+<strong>{{ comparison_summary[key].detected }}/{{ comparison_rows|length }}</strong><p>luật có cảnh báo trong lượt thử</p>
+{% if comparison_summary[key].not_seen %}<p><b>{{ comparison_summary[key].not_seen }} luật chưa thấy cảnh báo</b></p>{% endif %}
+{% if comparison_summary[key].unknown %}<p>{{ comparison_summary[key].unknown }} luật chưa đủ thông tin</p>{% endif %}
+<p class="comparison-muted">Đã nhận {{ report.platforms[key].logs }} log chung.</p></article>
+{% endfor %}
+</div>
+<h5>Điểm khác nhau cần chú ý</h5>
+{% set r17 = comparison_rows|selectattr('code','equalto','R17')|first|default(none) %}
+<p class="comparison-explanation">{% if r17 and r17.cells.soc.present and r17.cells.elastic.present and r17.cells.wazuh.present is sameas false %}<strong>R17:</strong> SOC và Elastic có cảnh báo về việc thử nhiều tài khoản; Wazuh chưa có cảnh báo tương ứng trong bản xuất cuối. {% endif %}Các dòng <strong>{% for row in comparison_rows if row.differs %}{{ row.code }}{{ ', ' if not loop.last }}{% else %}chưa có khác biệt về kết quả hoặc số lượng{% endfor %}</strong> có kết quả hoặc số lượng cần đối chiếu. Mở phần điều kiện trong từng ô để xem cách nhận diện của mỗi nền tảng.</p>
+<p class="comparison-explanation"><strong>Cách đọc:</strong> “cảnh báo #89” là mã để mở một cảnh báo, không phải 89 cảnh báo. Bản xuất SOC dẫn một cảnh báo tiêu biểu mỗi luật, chưa có tổng số theo từng luật. Elastic và Wazuh có số lượng trong bản xuất. Nhiều cảnh báo hơn chưa có nghĩa phát hiện tốt hơn vì cách đếm, khoảng thời gian và cách gộp có thể khác nhau.</p>
+<h5 class="mt-4">Kết quả và cách nhận diện từng luật</h5>
+<div class="comparison-toolbar no-print">
+<label for="comparison-search">Tìm luật hoặc hành vi</label><input id="comparison-search" class="form-control form-control-sm" style="max-width:270px" type="search" placeholder="Ví dụ: R17, đăng nhập, xóa log">
+<label><input id="comparison-differences" class="form-check-input me-1" type="checkbox"> Chỉ xem các dòng có kết quả hoặc số lượng khác nhau</label>
+<span id="comparison-visible-count" class="comparison-muted" aria-live="polite"></span>
+</div>
+<div class="table-responsive"><table class="table table-bordered bg-white comparison-table">
+<caption class="comparison-muted">“Chưa có số tổng” khác với 0. Máy bên dưới là máy của log bằng chứng được dẫn, không phải danh sách tất cả máy của lượt thử.</caption>
+<thead><tr><th scope="col">Luật</th><th scope="col">Hoạt động kiểm tra</th>{% for key,name in visible %}<th scope="col">{{ name }}</th>{% endfor %}<th scope="col">Khác nhau ở đâu?</th></tr></thead><tbody>
+{% for row in comparison_rows %}
+<tr data-comparison-row data-different="{{ 'yes' if row.differs else 'no' }}" data-search="{{ (row.code ~ ' ' ~ row.name ~ ' ' ~ (row.evidence_host or ''))|lower }}">
+<td><strong>{{ row.code }}</strong></td><td class="rule-name">{{ row.name }}<div class="comparison-muted mt-2">Máy của log được dẫn: <b>{{ row.evidence_host or 'Chưa xác minh' }}</b></div></td>
+{% for key,name in visible %}{% set cell = row.cells[key] %}<td class="platform-cell">
+{% if cell.present is sameas true %}<span class="comparison-result">Đã có cảnh báo</span>{% elif cell.present is sameas false %}<span class="comparison-result absent">Chưa thấy cảnh báo</span>{% else %}<span class="comparison-result unknown">Chưa đủ thông tin</span>{% endif %}
+{% if cell.count is not none %}<span class="comparison-count">{{ cell.count }} cảnh báo trong bản xuất</span>{% elif key == 'soc' and cell.alert_id %}<div class="comparison-muted">Bản xuất dẫn 1 cảnh báo; chưa có số tổng theo luật.</div>{% else %}<div class="comparison-muted">Chưa có số tổng.</div>{% endif %}
+{% if cell.builtin %}<div class="comparison-muted">Qua luật có sẵn số {{ cell.builtin }}.</div>{% endif %}
+{% if key == 'soc' and cell.alert_id %}<div class="comparison-evidence"><a href="{{ url_for('main.alert_detail', alert_id=cell.alert_id, platform='soc') }}">Xem cảnh báo #{{ cell.alert_id }}</a><a href="{{ url_for('main.log_detail', event_id=cell.event_id, platform='soc') }}">Xem log #{{ cell.event_id }}</a></div>{% endif %}
+{% if row.get('definitions') %}{% set definition = row.definitions[key] %}<details class="mt-2"><summary>Điều kiện nhận diện</summary><p class="small mt-2">{{ definition.explanation }}</p><div class="comparison-muted">{{ definition.origin }}</div>{% if definition.config %}<pre class="small text-wrap mt-2">{{ definition.config|pretty_json }}</pre>{% endif %}</details>{% endif %}
+</td>{% endfor %}<td class="difference">{{ row.difference }}{% if row.code == 'R16' %}<div class="comparison-muted mt-2">Log được dẫn còn liên kết với R13; cần đọc đủ bằng chứng của nhóm đếm.</div>{% endif %}</td></tr>
+{% endfor %}
+</tbody></table></div><p id="comparison-empty" role="status">Không có luật phù hợp với bộ lọc đang chọn.</p>
+{% include 'comparison_assessment.html' %}
+<details class="mt-3"><summary>Số liệu tổng và phạm vi lượt đối chiếu</summary>
+<p class="comparison-explanation mt-2">Tổng Wazuh còn có luật tiếp nhận dữ liệu và luật có sẵn. Log được chuẩn hóa qua SOC rồi gửi lại sang hai nền tảng, với thời gian gửi lại được rút ngắn. Lượt này chưa đo độc lập độ chính xác hoặc tốc độ từ log gốc.</p>
+<div class="table-responsive"><table class="table table-bordered bg-white"><thead><tr><th>Chỉ số</th>{% for key,name in visible %}<th>{{ name }}</th>{% endfor %}</tr></thead><tbody>
+{% for label,field in [('Log trong bộ chung','logs'),('Mã sự kiện bị thiếu','missing_ids'),('Log có nội dung gốc khác','raw_mismatches'),('Tổng cảnh báo ghi trong bản xuất','alerts'),('Thời điểm thu kết quả','collected_at_local')] %}<tr><th>{{ label }}</th>{% for key,name in visible %}<td>{{ report.platforms[key][field] }}</td>{% endfor %}</tr>{% endfor %}
+</tbody></table></div><p class="comparison-muted">Tổng SOC là số cảnh báo được chọn làm bằng chứng, khác tổng cảnh báo toàn cơ sở dữ liệu.</p></details>
+<details class="mt-3"><summary>Mã sự kiện và dấu kiểm tra bộ dữ liệu</summary><code>{{ report.sha256 }}</code><p class="small">{{ report.source_event_ids|join(', ') }}</p></details>
+{% endif %}
+<p class="mt-3 small"><a href="{{ url_for('main.comparison', mode='benchmark', platform=selected_platform) }}">Xem bài thử dữ liệu tổng hợp trước đây</a></p>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+ const search = document.getElementById('comparison-search'); if (!search) return;
+ const differences = document.getElementById('comparison-differences');
+ const rows = [...document.querySelectorAll('[data-comparison-row]')];
+ function filterRows() {
+  const query = search.value.trim().toLocaleLowerCase('vi'); let count = 0;
+  rows.forEach(row => { const show = row.dataset.search.includes(query) && (!differences.checked || row.dataset.different === 'yes'); row.hidden = !show; if (show) count++; });
+  document.getElementById('comparison-visible-count').textContent = `Đang xem ${count}/${rows.length} luật`;
+  document.getElementById('comparison-empty').style.display = count ? 'none' : 'block';
+ }
+ search.addEventListener('input', filterRows); differences.addEventListener('change', filterRows); filterRows();
+})();
+</script>
+{% endblock %}

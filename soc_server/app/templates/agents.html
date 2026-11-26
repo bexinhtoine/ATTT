@@ -23,7 +23,7 @@
     </tbody></table></div>
 </div>
 
-<div class="modal fade" id="enrollModal" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content">
+<div class="modal fade" id="enrollModal" tabindex="-1"><div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content">
   <div class="modal-header"><h5 class="modal-title">Cài đặt SOC Agent trên máy trạm</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
   <div class="modal-body small">
     <p>Sao chép thư mục <code>soc_agent/</code> sang máy cần giám sát, tạo tệp <code>config.json</code> rồi chạy. Agent sẽ tự đăng ký bằng <strong>enrollment token</strong> và nhận API key riêng.</p>
@@ -36,6 +36,12 @@ python agent.py            # chạy liên tục; hoặc cài thành dịch vụ:
 <pre class="raw">cd soc_agent
 sudo python3 agent.py --server {{ server_url }} --token {{ enrollment_token }} --register
 sudo python3 agent.py      # hoặc: sudo cp install/soc-agent.service /etc/systemd/system/ &amp;&amp; sudo systemctl enable --now soc-agent</pre>
+    <p class="mb-1"><strong>Windows Server 2003 trong lab (bộ đọc WMI riêng):</strong></p>
+    <p>Sao chép <code>soc_agent/legacy_windows2003.vbs</code> vào <code>C:\soc_agent</code>. Chạy bằng tài khoản quản trị trong máy ảo. Bộ đọc này dùng WMI có sẵn, giữ nguyên Event ID cũ và không cần Python hoặc wevtutil.</p>
+<pre class="raw">cd /d C:\soc_agent
+cscript //nologo legacy_windows2003.vbs {{ server_url }} {{ enrollment_token }} --once
+cscript //nologo legacy_windows2003.vbs {{ server_url }}</pre>
+    <p>Bước <code>--once</code> đăng ký lần đầu và kiểm tra gửi log. Khi thành công, chạy lệnh thứ hai để thu thập liên tục. Không chạy đồng thời hai bản. Bộ đọc WMI dành cho lab, chỉ nạp tối đa 5 log gần nhất mỗi kênh ở lần đầu; các lần sau đọc tiếp theo checkpoint.</p>
     <p class="mb-0">Mặc định agent thu thập: Windows (Security, System, Application) · Linux (/var/log/auth.log hoặc /var/log/secure, /var/log/syslog hoặc /var/log/messages, journald). Có thể thêm tệp log tùy ý (Nginx/Apache access log...) trong <code>config.json</code>.</p>
   </div>
 </div></div></div>

@@ -95,62 +95,71 @@ def ip_reputation(ip):
     return {"ip": ip, "verdict": "unknown", "source": None, "note": None}
 
 
-def ip_history(ip, days=7):
+def ip_history(ip, days=7, cutoff=None):
     if not ip:
         return {}
-    since = utcnow() - timedelta(days=days)
-    q = LogEvent.query.filter(LogEvent.src_ip == ip, LogEvent.event_time >= since)
+    cutoff = cutoff or utcnow()
+    since = cutoff - timedelta(days=days)
+    base = LogEvent.query.filter(LogEvent.src_ip == ip, LogEvent.event_time <= cutoff,
+                                 LogEvent.received_at <= cutoff)
+    q = base.filter(LogEvent.event_time >= since)
     total = q.count()
     if not total:
         return {"total_events": 0, "days": days}
-    failed = q.filter(LogEvent.outcome == "failure").count()
+    failed = q.filter(LogEvent.outcome == "failure", LogEvent.category == "authentication").count()
     success = q.filter(LogEvent.outcome == "success", LogEvent.category == "authentication").count()
-    hosts = [r[0] for r in db.session.query(LogEvent.host).filter(
-        LogEvent.src_ip == ip, LogEvent.event_time >= since).distinct().limit(20)]
-    users = [r[0] for r in db.session.query(LogEvent.user_name).filter(
-        LogEvent.src_ip == ip, LogEvent.event_time >= since, LogEvent.user_name.isnot(None)).distinct().limit(30)]
-    first_seen = db.session.query(func.min(LogEvent.event_time)).filter(LogEvent.src_ip == ip).scalar()
-    last_seen = db.session.query(func.max(LogEvent.event_time)).filter(LogEvent.src_ip == ip).scalar()
+    hosts = [r[0] for r in q.with_entities(LogEvent.host).distinct().limit(20)]
+    users = [r[0] for r in q.with_entities(LogEvent.user_name).filter(LogEvent.user_name.isnot(None)).distinct().limit(30)]
+    first_seen = base.with_entities(func.min(LogEvent.event_time)).scalar()
+    last_seen = base.with_entities(func.max(LogEvent.event_time)).scalar()
     return {"days": days, "total_events": total, "failed_auth": failed, "success_auth": success,
             "hosts_targeted": hosts, "users_tried": users, "first_seen": first_seen, "last_seen": last_seen}
 
 
-def user_context(user_name, host=None):
+def user_context(user_name, host=None, cutoff=None):
     if not user_name:
         return {}
-    since = utcnow() - timedelta(hours=24)
-    base = LogEvent.query.filter(LogEvent.user_name == user_name)
-    first_seen = db.session.query(func.min(LogEvent.event_time)).filter(LogEvent.user_name == user_name).scalar()
+    cutoff = cutoff or utcnow()
+    since = cutoff - timedelta(hours=24)
+    base = LogEvent.query.filter(LogEvent.user_name == user_name, LogEvent.event_time <= cutoff,
+                                 LogEvent.received_at <= cutoff)
+    if host:
+        base = base.filter(LogEvent.host == host)
+    first_seen = base.with_entities(func.min(LogEvent.event_time)).scalar()
     q24 = base.filter(LogEvent.event_time >= since)
-    hosts = [r[0] for r in db.session.query(LogEvent.host).filter(
-        LogEvent.user_name == user_name, LogEvent.event_time >= since).distinct().limit(20)]
+    hosts = [r[0] for r in q24.with_entities(LogEvent.host).distinct().limit(20)]
     return {"user": user_name, "is_privileged": user_name.lower() in PRIVILEGED_USERS,
             "first_seen": first_seen, "events_24h": q24.count(),
             "failed_24h": q24.filter(LogEvent.outcome == "failure").count(),
             "success_24h": q24.filter(LogEvent.outcome == "success",
                                       LogEvent.category == "authentication").count(),
             "hosts_24h": hosts,
-            "is_new_account": bool(first_seen and first_seen >= utcnow() - timedelta(days=1))}
+            "is_new_account": bool(first_seen and first_seen >= cutoff - timedelta(days=1))}
 
 
-def host_context(agent, host=None):
-    since = utcnow() - timedelta(hours=24)
+def host_context(agent, host=None, cutoff=None):
+    cutoff = cutoff or utcnow()
+    since = cutoff - timedelta(hours=24)
     name = agent.hostname if agent else host
     ctx = {"host": name}
     if agent:
         ctx.update({"agent_id": agent.id, "os_type": agent.os_type, "os_version": agent.os_version,
                     "ip_address": agent.ip_address, "status": agent.status, "last_seen": agent.last_seen,
                     "metrics": agent.metrics_dict})
-    ctx["events_24h"] = LogEvent.query.filter(LogEvent.host == name, LogEvent.event_time >= since).count()
-    ctx["open_alerts"] = Alert.query.filter(Alert.host == name, Alert.status.in_(OPEN_STATUSES)).count()
-    ctx["alerts_7d"] = Alert.query.filter(Alert.host == name,
-                                          Alert.created_at >= utcnow() - timedelta(days=7)).count()
+    ctx["inventory_is_live"] = True
+    ctx["events_24h"] = LogEvent.query.filter(LogEvent.host == name, LogEvent.event_time >= since,
+                                             LogEvent.event_time <= cutoff, LogEvent.received_at <= cutoff).count()
+    ctx["open_alerts"] = Alert.query.filter(Alert.host == name, Alert.status.in_(OPEN_STATUSES),
+                                            Alert.created_at <= cutoff).count()
+    ctx["alerts_7d"] = Alert.query.filter(Alert.host == name, Alert.created_at <= cutoff,
+                                          Alert.created_at >= cutoff - timedelta(days=7)).count()
     return ctx
 
 
-def related_alerts(alert, days=7, limit=10):
-    since = utcnow() - timedelta(days=days)
-    q = Alert.query.filter(Alert.id != alert.id, Alert.created_at >= since)
+def related_alerts(alert, days=7, limit=10, cutoff=None):
+    cutoff = cutoff or utcnow()
+    since = cutoff - timedelta(days=days)
+    q = Alert.query.filter(Alert.id != alert.id, Alert.created_at >= since, Alert.created_at <= cutoff)
     conds = []
     if alert.src_ip:
         conds.append(Alert.src_ip == alert.src_ip)
@@ -174,15 +183,17 @@ def time_context(dt_utc):
             "weekend": local.weekday() >= 5}
 
 
-def enrich_alert(alert):
+def enrich_alert(alert, cutoff=None):
     """Tổng hợp toàn bộ ngữ cảnh cho một cảnh báo -> dict (có thể lưu JSON)."""
     ip = alert.src_ip
+    cutoff = cutoff or utcnow()
     enrichment = {
-        "ip": {**classify_ip(ip), "reputation": ip_reputation(ip), "history": ip_history(ip)} if ip else None,
-        "user": user_context(alert.user_name, alert.host) if alert.user_name else None,
-        "host": host_context(alert.agent, alert.host),
+        "cutoff": cutoff.isoformat() + "Z", "mutable_context_is_live": True,
+        "ip": {**classify_ip(ip), "reputation": ip_reputation(ip), "history": ip_history(ip, cutoff=cutoff)} if ip else None,
+        "user": user_context(alert.user_name, alert.host, cutoff=cutoff) if alert.user_name else None,
+        "host": host_context(alert.agent, alert.host, cutoff=cutoff),
         "mitre": mitre_info(alert.mitre_technique),
-        "related_alerts": related_alerts(alert),
+        "related_alerts": related_alerts(alert, cutoff=cutoff),
         "time": time_context(alert.last_event_time or alert.created_at),
         "rule": {"code": alert.rule.code, "name": alert.rule.name, "type": alert.rule.rule_type,
                  "severity": alert.rule.severity} if alert.rule else None,

@@ -28,7 +28,7 @@ class BaseCollector:
 
     def __init__(self, name, state=None, host=None):
         self.name = name
-        self.state = state or {}
+        self.state = state if state is not None else {}
         self.host = host
 
     def collect(self):
@@ -55,12 +55,12 @@ class FileCollector(BaseCollector):
 
     def collect(self):
         if not os.path.exists(self.path):
-            return []
+            raise FileNotFoundError(self.path)
         try:
             size = os.path.getsize(self.path)
             inode = getattr(os.stat(self.path), "st_ino", 0)
         except OSError:
-            return []
+            raise
         offset = self.state.get("offset", None)
         prev_inode = self.state.get("inode")
         # Lần đầu: bắt đầu từ cuối tệp để không gửi ồ ạt toàn bộ lịch sử
@@ -76,6 +76,10 @@ class FileCollector(BaseCollector):
             # `for line in f` (OSError "telling position disabled by next() call"), nên con trỏ
             # byte phải được lấy bằng readline() từng dòng.
             with open(self.path, "rb") as f:
+                actual = os.fstat(f.fileno())
+                inode = getattr(actual, "st_ino", 0)
+                if actual.st_size < offset or (prev_inode and inode and prev_inode != inode):
+                    offset = 0
                 f.seek(offset)
                 while lines_read < self.max_lines:
                     pos = f.tell()
@@ -93,7 +97,7 @@ class FileCollector(BaseCollector):
                         events.append(ev)
                 offset = f.tell()
         except OSError:
-            return []
+            raise
         self.state.update({"offset": offset, "inode": inode})
         return events
 
@@ -133,27 +137,34 @@ class WindowsEventLogCollector(BaseCollector):
             id_filter = "(" + " or ".join("EventID=%s" % e for e in self.event_ids) + ")"
         # Lần đầu (last_record = 0): chỉ lấy bản ghi MỚI NHẤT của kênh để ghi nhận mốc,
         # không gửi lịch sử ồ ạt về server
-        if not last_record:
+        if not last_record and not self.state.get("initialized"):
             try:
                 xml = self._query("*", 1, newest_first=True)
-            except Exception:
-                return []
+            except Exception as exc:
+                raise RuntimeError("Không đọc được kênh %s: %s" % (self.channel, exc)) from exc
             events = parsers.parse_windows_event_xml(xml)
             if events:
                 self.state["last_record"] = max(int((e.get("extra") or {}).get("record_id") or 0) for e in events)
+            self.state["initialized"] = True
             return []
         xpath = "*[System[%sEventRecordID>%d]]" % (id_filter + " and " if id_filter else "", last_record)
         try:
             # Đọc theo thứ tự cũ -> mới: nếu có nhiều hơn max_events sự kiện mới thì lấy phần đầu,
             # phần còn lại sẽ được lấy ở chu kỳ sau (không bị "nhảy cóc" như khi đọc ngược)
             xml = self._query(xpath, self.max_events, newest_first=False)
-        except Exception:
-            # Một số bản Windows cần XPath tối giản -> thử lại không lọc record id
-            try:
-                xml = self._query("*[System[%s]]" % id_filter if id_filter else "*", 200, newest_first=True)
-            except Exception:
-                return []
+        except Exception as exc:
+            # Reading only the newest 200 records here could silently skip backlog.
+            raise RuntimeError("Không đọc được kênh %s: %s" % (self.channel, exc)) from exc
         events = parsers.parse_windows_event_xml(xml)
+        if not events and last_record:
+            newest = parsers.parse_windows_event_xml(self._query("*", 1, newest_first=True))
+            newest_record = max((int((e.get("extra") or {}).get("record_id") or 0) for e in newest), default=0)
+            if 0 < newest_record < last_record:
+                # Channel was cleared/reset. Read forward from its current beginning.
+                xml = self._query("*[System[%s]]" % id_filter if id_filter else "*",
+                                  self.max_events, newest_first=False)
+                events = parsers.parse_windows_event_xml(xml)
+                last_record = 0
         fresh, max_rec = [], last_record
         for ev in events:
             rec = int((ev.get("extra") or {}).get("record_id") or 0)
@@ -193,7 +204,9 @@ class JournaldCollector(BaseCollector):
         try:
             out = subprocess.run(cmd, capture_output=True, timeout=60)
         except (FileNotFoundError, subprocess.TimeoutExpired):
-            return []
+            raise
+        if out.returncode != 0:
+            raise RuntimeError("journalctl thất bại: %s" % out.stderr.decode("utf-8", "replace")[:300])
         text = out.stdout.decode("utf-8", "replace")
         events, last_cursor, n = [], cursor, 0
         for line in text.splitlines():

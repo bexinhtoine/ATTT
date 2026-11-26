@@ -18,6 +18,7 @@ Cách dùng:
     python agent.py --once                  # thu thập và gửi một lần rồi thoát (dùng để kiểm thử)
 """
 import argparse
+import copy
 import json
 import os
 import platform
@@ -25,9 +26,11 @@ import socket
 import ssl
 import sys
 import time
+import uuid
 import urllib.request
 import urllib.error
 from collections import deque
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 import collectors as collectors_mod
@@ -39,7 +42,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_FILE = os.path.join(BASE_DIR, "agent_state.json")
 SPOOL_FILE = os.path.join(BASE_DIR, "agent_spool.json")     # hàng đợi chưa gửi, lưu khi dừng agent
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
-AGENT_VERSION = "1.1.0"
+AGENT_VERSION = "1.2.0"
 
 
 def log(msg):
@@ -60,7 +63,43 @@ def save_json(path, data):
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(tmp, path)
+
+
+@contextmanager
+def agent_lock(directory):
+    """OS-owned lock is released even after a hard kill; one writer per spool."""
+    os.makedirs(directory, exist_ok=True)
+    stream = open(os.path.join(directory, "agent.lock"), "a+b")
+    acquired = False
+    try:
+        if os.path.getsize(stream.name) == 0:
+            stream.write(b"0")
+            stream.flush()
+        stream.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquired = True
+        except OSError as exc:
+            raise RuntimeError("Một agent khác đang sử dụng thư mục dữ liệu này.") from exc
+        yield
+    finally:
+        if acquired:
+            stream.seek(0)
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+        stream.close()
 
 
 def detect_os():
@@ -113,15 +152,22 @@ def get_metrics():
 class SOCAgent:
     def __init__(self, config):
         self.config = config
+        data_dir = config.get("data_dir", BASE_DIR)
+        os.makedirs(data_dir, exist_ok=True)
+        self.state_file = os.path.join(data_dir, "agent_state.json")
+        self.spool_file = os.path.join(data_dir, "agent_spool.json")
         self.server = config["server"].rstrip("/")
         self.verify_tls = config.get("verify_tls", True)
-        self.state = load_json(STATE_FILE, {})
+        self.state = load_json(self.state_file, {})
         self.api_key = self.state.get("api_key") or config.get("api_key")
         self.hostname = config.get("hostname") or socket.gethostname()
         self.interval = config.get("interval_seconds", 10)
         self.heartbeat_interval = config.get("heartbeat_seconds", 60)
-        self.batch_size = config.get("batch_size", 500)
-        self.queue = deque(maxlen=config.get("max_queue", 50000))
+        self.batch_size = max(1, min(int(config.get("batch_size", 500)), 2000))
+        self.max_queue = max(1, int(config.get("max_queue", 50000)))
+        self.queue = deque()  # Never evict unacknowledged events silently.
+        self.quarantine = []
+        self.collector_health = {}
         self._load_spool()
         self.collectors = self._build_collectors()
         self._ssl_ctx = None
@@ -153,29 +199,34 @@ class SOCAgent:
         self.state["collector_states"] = {c.name: c.state for c in self.collectors}
         self.state["api_key"] = self.api_key
         self.state["hostname"] = self.hostname
-        save_json(STATE_FILE, self.state)
+        save_json(self.state_file, self.state)
 
     # ------------------------------------------------------------------ spool
     def _load_spool(self):
-        """Nạp lại các sự kiện chưa gửi được từ lần chạy trước (nếu có) rồi xóa tệp spool."""
-        spool = load_json(SPOOL_FILE, {})
+        """Restore queue and checkpoints together; fail closed on corrupt snapshots."""
+        if not os.path.exists(self.spool_file):
+            return
+        with open(self.spool_file, encoding="utf-8") as stream:
+            spool = json.load(stream)
+        if not isinstance(spool, dict) or not isinstance(spool.get("events"), list):
+            raise ValueError("Spool không hợp lệ: %s" % self.spool_file)
         events = spool.get("events") if isinstance(spool, dict) else None
         if events:
+            if any(not isinstance(e, dict) for e in events):
+                raise ValueError("Spool chứa sự kiện không hợp lệ")
             self.queue.extend(e for e in events if isinstance(e, dict))
-            log("Nạp lại %d sự kiện chưa gửi từ lần chạy trước (%s)" % (len(events), SPOOL_FILE))
-        if os.path.exists(SPOOL_FILE):
-            try:
-                os.remove(SPOOL_FILE)
-            except OSError:
-                pass
+            log("Nạp lại %d sự kiện chưa gửi từ lần chạy trước (%s)" % (len(events), self.spool_file))
+        if isinstance(spool.get("collector_states"), dict):
+            self.state["collector_states"] = spool["collector_states"]
+        self.quarantine = spool.get("quarantine", [])
 
     def _save_spool(self):
-        """Ghi hàng đợi chưa gửi ra đĩa khi agent dừng, để log không mất khi server đang offline."""
-        if not self.queue:
-            return
-        save_json(SPOOL_FILE, {"saved_at": datetime.now(timezone.utc).isoformat(),
-                               "hostname": self.hostname, "events": list(self.queue)})
-        log("Đã lưu %d sự kiện chưa gửi vào %s (sẽ gửi lại khi khởi động)" % (len(self.queue), SPOOL_FILE))
+        """Persist even an empty queue so acknowledged events cannot reappear."""
+        save_json(self.spool_file, {
+            "version": 2, "saved_at": datetime.now(timezone.utc).isoformat(),
+            "hostname": self.hostname, "events": list(self.queue),
+            "collector_states": {c.name: copy.deepcopy(c.state) for c in self.collectors},
+            "quarantine": self.quarantine})
 
     def _apply_server_config(self, cfg):
         """Áp dụng cấu hình tập trung do Web SOC gửi xuống (chu kỳ, heartbeat, kích thước lô)
@@ -191,6 +242,7 @@ class SOCAgent:
                 changed.append("%s=%d" % (key, val))
         if changed:
             log("Áp dụng cấu hình từ server: %s" % ", ".join(changed))
+        self.batch_size = min(self.batch_size, max(1, int(cfg.get("max_events_per_batch", 2000))))
 
     # ---------------------------------------------------------------- network
     def _request(self, path, payload, headers=None, timeout=30):
@@ -223,7 +275,8 @@ class SOCAgent:
         payload = {"enrollment_token": token, "hostname": self.hostname, "os_type": os_type,
                    "os_version": os_version, "ip_address": primary_ip(), "agent_version": AGENT_VERSION,
                    "collectors": [c.describe() for c in self.collectors]}
-        status, body = self._request("/api/v1/agents/register", payload)
+        status, body = self._request("/api/v1/agents/register", payload,
+                                     {"X-API-Key": self.api_key} if self.api_key else None)
         if status == 201 and isinstance(body, dict):
             self.api_key = body["api_key"]
             self.state["api_key"] = self.api_key
@@ -231,7 +284,7 @@ class SOCAgent:
             self._save_state()
             self._apply_server_config(body.get("config"))
             log("Đăng ký thành công. Hostname=%s, agent_uid=%s" % (self.hostname, body.get("agent_uid")))
-            log("Đã lưu API key vào %s" % STATE_FILE)
+            log("Đã lưu API key vào %s" % self.state_file)
             return True
         log("Đăng ký THẤT BẠI (HTTP %s): %s" % (status, body))
         return False
@@ -239,7 +292,9 @@ class SOCAgent:
     def send_heartbeat(self):
         if not self.api_key:
             return
-        payload = {"metrics": {**get_metrics(), "queue_size": len(self.queue)},
+        payload = {"metrics": {**get_metrics(), "queue_size": len(self.queue),
+                               "queue_capacity": self.max_queue, "quarantined": len(self.quarantine),
+                               "collector_health": self.collector_health},
                    "collectors": [c.describe() for c in self.collectors],
                    "agent_version": AGENT_VERSION, "ip_address": primary_ip()}
         status, body = self._request("/api/v1/agents/heartbeat", payload, {"X-API-Key": self.api_key})
@@ -249,23 +304,50 @@ class SOCAgent:
             self._apply_server_config(body.get("config"))
 
     def flush_queue(self):
-        """Gửi các sự kiện trong hàng đợi theo lô. Giữ lại lô gửi lỗi để thử lần sau."""
+        """Remove only acknowledged items; keep rejected payloads in the snapshot."""
         sent = 0
         while self.queue:
-            batch = [self.queue.popleft() for _ in range(min(self.batch_size, len(self.queue)))]
+            batch = list(self.queue)[:self.batch_size]
             status, body = self._request("/api/v1/logs", {"events": batch}, {"X-API-Key": self.api_key})
             if status == 200 and isinstance(body, dict):
+                receipts = body.get("receipts")
+                if receipts is None:
+                    if (body.get("accepted", 0) + body.get("duplicates", 0) != len(batch)
+                            or body.get("rejected", 0)):
+                        log("ACK không đầy đủ; giữ nguyên lô để tránh mất log.")
+                        return sent
+                    receipts = [{"index": i, "status": "accepted"} for i in range(len(batch))]
+                if (not isinstance(receipts, list) or len(receipts) != len(batch)
+                        or any(not isinstance(r, dict) for r in receipts)
+                        or any(type(r.get("index")) is not int for r in receipts)
+                        or {r["index"] for r in receipts} != set(range(len(batch)))
+                        or any(r.get("status") not in ("accepted", "duplicate", "rejected", "retry")
+                               for r in receipts)):
+                    log("ACK sai định dạng; giữ nguyên lô.")
+                    return sent
+                pending = {r["index"] for r in receipts if r["status"] == "retry"}
+                previous_queue, previous_quarantine = self.queue, list(self.quarantine)
+                for r in receipts:
+                    if r["status"] == "rejected":
+                        self.quarantine.append({"event": batch[r["index"]], "reason": r.get("reason"),
+                                                "at": datetime.now(timezone.utc).isoformat()})
+                self.queue = deque([e for i, e in enumerate(batch) if i in pending]
+                                   + list(previous_queue)[len(batch):])
+                try:
+                    self._save_spool()
+                except Exception:
+                    self.queue, self.quarantine = previous_queue, previous_quarantine
+                    raise
                 sent += body.get("accepted", 0)
                 if body.get("alerts_new"):
                     log("Server phát sinh %d cảnh báo mới (AI đã khởi chạy: %s)" %
                         (body["alerts_new"], body.get("ai_started", 0)))
+                if pending:
+                    return sent
             elif status == 401:
                 log("API key không hợp lệ - cần đăng ký lại. Giữ lại %d sự kiện." % len(batch))
-                self.queue.extendleft(reversed(batch))
                 return sent
             else:
-                # Lỗi mạng/máy chủ: trả sự kiện về đầu hàng đợi, thử lại sau
-                self.queue.extendleft(reversed(batch))
                 log("Gửi lô thất bại (HTTP %s). Sẽ thử lại. Hàng đợi: %d" % (status, len(self.queue)))
                 return sent
         return sent
@@ -274,13 +356,41 @@ class SOCAgent:
     def collect_once(self):
         total = 0
         for c in self.collectors:
+            capacity = self.max_queue - len(self.queue)
+            if capacity <= 0:
+                self.collector_health[c.name] = {"status": "backpressure", "queue_size": len(self.queue)}
+                continue
+            before = copy.deepcopy(c.state)
+            limit_attr = "max_lines" if hasattr(c, "max_lines") else "max_events" if hasattr(c, "max_events") else None
+            old_limit = getattr(c, limit_attr) if limit_attr else None
             try:
+                if limit_attr:
+                    setattr(c, limit_attr, min(old_limit, capacity))
                 events = c.collect()
+                if len(events) > capacity:
+                    c.state = before
+                    self.collector_health[c.name] = {"status": "backpressure", "required": len(events)}
+                    continue
+                for ev in events:
+                    ev.setdefault("event_uid", str(uuid.uuid4()))
+                self.queue.extend(events)
+                try:
+                    self._save_spool()
+                except Exception:
+                    for _ in events:
+                        self.queue.pop()
+                    c.state = before
+                    raise
+                self.collector_health[c.name] = {"status": "ok", "last_poll": datetime.now(timezone.utc).isoformat(),
+                                               "events_last_poll": len(events)}
             except Exception as exc:
+                c.state = before
+                self.collector_health[c.name] = {"status": "error", "error": str(exc)[:300]}
                 log("Collector %s lỗi: %s" % (c.name, exc))
                 continue
-            for ev in events:
-                self.queue.append(ev)
+            finally:
+                if limit_attr:
+                    setattr(c, limit_attr, old_limit)
             total += len(events)
         if total:
             log("Thu thập %d sự kiện mới (hàng đợi: %d)" % (total, len(self.queue)))
@@ -332,6 +442,8 @@ def load_config(args):
         config["server"] = args.server
     if args.hostname:
         config["hostname"] = args.hostname
+    if args.data_dir:
+        config["data_dir"] = args.data_dir
     if not config.get("server"):
         config["server"] = "http://127.0.0.1:5000"
     return config
@@ -342,6 +454,7 @@ def main():
     parser.add_argument("--server", help="URL Web SOC, vd http://192.168.1.10:5000")
     parser.add_argument("--token", help="Enrollment token để đăng ký")
     parser.add_argument("--hostname", help="Ghi đè hostname")
+    parser.add_argument("--data-dir", help="Thư mục riêng lưu khóa, checkpoint và hàng đợi")
     parser.add_argument("--register", action="store_true", help="Đăng ký với server rồi tiếp tục chạy")
     parser.add_argument("--once", action="store_true", help="Thu thập và gửi một lần rồi thoát")
     parser.add_argument("--no-verify-tls", action="store_true", help="Bỏ qua kiểm tra chứng chỉ TLS (chỉ dùng trong LAB)")
@@ -350,6 +463,11 @@ def main():
     config = load_config(args)
     if args.no_verify_tls:
         config["verify_tls"] = False
+    with agent_lock(config.get("data_dir", BASE_DIR)):
+        _run_agent(args, config)
+
+
+def _run_agent(args, config):
     agent = SOCAgent(config)
 
     if args.register:

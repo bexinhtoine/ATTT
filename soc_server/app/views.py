@@ -8,6 +8,8 @@ Uy tín IP, Người dùng, Nhật ký thao tác, Cài đặt.
 import csv
 import io
 import json
+import re
+from pathlib import Path
 from datetime import timedelta
 
 from flask import (Blueprint, render_template, request, redirect, url_for, flash, g, abort,
@@ -23,6 +25,8 @@ from .api import apply_event_filters
 from .detection import RuleEngine
 from .parsers import parse_iso
 from . import stats as stats_mod
+from .platforms import platform_view
+from .time_inputs import parse_form_datetime
 
 bp = Blueprint("main", __name__)
 
@@ -46,8 +50,9 @@ def _csv_response(filename, header, rows):
 
 
 def _parse_range(default_hours=24):
-    until = parse_iso(request.args.get("to")) if request.args.get("to") else None
-    since = parse_iso(request.args.get("from")) if request.args.get("from") else None
+    tz = current_app.config.get("TIMEZONE", "Asia/Ho_Chi_Minh")
+    until = parse_form_datetime(request.args.get("to"), tz)
+    since = parse_form_datetime(request.args.get("from"), tz)
     until = until.replace(tzinfo=None) if until else utcnow()
     since = since.replace(tzinfo=None) if since else until - timedelta(hours=default_hours)
     return since, until
@@ -56,6 +61,7 @@ def _parse_range(default_hours=24):
 # ------------------------------------------------------------------ Dashboard
 @bp.route("/")
 @login_required
+@platform_view('dashboard', listing=True)
 def dashboard():
     return render_template("dashboard.html", stats=stats_mod.dashboard_stats())
 
@@ -63,6 +69,7 @@ def dashboard():
 # -------------------------------------------------------------------- Agents
 @bp.route("/agents")
 @login_required
+@platform_view('agents', listing=True)
 def agents():
     rows = Agent.query.order_by(Agent.status.desc(), Agent.hostname).all()
     return render_template("agents.html", agents=rows,
@@ -72,6 +79,7 @@ def agents():
 
 @bp.route("/agents/<int:agent_id>")
 @login_required
+@platform_view('agents')
 def agent_detail(agent_id):
     agent = db.session.get(Agent, agent_id) or abort(404)
     events = agent.events.order_by(LogEvent.event_time.desc()).limit(50).all()
@@ -87,6 +95,7 @@ def agent_detail(agent_id):
 
 @bp.post("/agents/<int:agent_id>/rekey")
 @role_required("admin")
+@platform_view('agents')
 def agent_rekey(agent_id):
     agent = db.session.get(Agent, agent_id) or abort(404)
     key = agent.issue_api_key()
@@ -98,6 +107,7 @@ def agent_rekey(agent_id):
 
 @bp.post("/agents/<int:agent_id>/delete")
 @role_required("admin")
+@platform_view('agents')
 def agent_delete(agent_id):
     agent = db.session.get(Agent, agent_id) or abort(404)
     name = agent.hostname
@@ -113,6 +123,7 @@ def agent_delete(agent_id):
 # ---------------------------------------------------------------------- Logs
 @bp.route("/logs")
 @login_required
+@platform_view('logs', listing=True)
 def logs():
     q = apply_event_filters(LogEvent.query, request.args)
     pagination = q.order_by(LogEvent.event_time.desc()).paginate(
@@ -127,6 +138,7 @@ def logs():
 
 @bp.route("/logs/export.csv")
 @login_required
+@platform_view('logs', export=True)
 def logs_export():
     q = apply_event_filters(LogEvent.query, request.args).order_by(LogEvent.event_time.desc()).limit(20000)
     rows = ((e.id, e.event_time, e.host, e.source, e.category, e.action, e.outcome, e.severity, e.event_id,
@@ -139,6 +151,7 @@ def logs_export():
 
 @bp.route("/logs/<int:event_id>")
 @login_required
+@platform_view('logs')
 def log_detail(event_id):
     ev = db.session.get(LogEvent, event_id) or abort(404)
     alerts = Alert.query.join(Alert.events).filter(LogEvent.id == ev.id).all()
@@ -148,6 +161,7 @@ def log_detail(event_id):
 # -------------------------------------------------------------------- Alerts
 @bp.route("/alerts")
 @login_required
+@platform_view('alerts', listing=True)
 def alerts():
     q = Alert.query
     a = request.args
@@ -190,6 +204,7 @@ def alerts():
 
 @bp.route("/alerts/<int:alert_id>")
 @login_required
+@platform_view('alerts')
 def alert_detail(alert_id):
     alert = db.session.get(Alert, alert_id) or abort(404)
     events = alert.events.order_by(LogEvent.event_time).limit(200).all()
@@ -201,14 +216,26 @@ def alert_detail(alert_id):
 
 @bp.post("/alerts/<int:alert_id>/update")
 @role_required("admin", "analyst")
+@platform_view('alerts')
 def alert_update(alert_id):
     alert = db.session.get(Alert, alert_id) or abort(404)
+    expected = request.form.get("expected_updated_at")
+    if expected and expected != alert.updated_at.isoformat():
+        return "Cảnh báo đã thay đổi. Hãy tải lại trước khi lưu.", 409
+    from .reviews import claim_alert_revision
+    if not claim_alert_revision(alert):
+        db.session.rollback()
+        return "Cảnh báo đã thay đổi. Hãy tải lại trước khi lưu.", 409
     status = request.form.get("status")
     if status in ALERT_STATUSES:
         alert.status = status
         if status in ("resolved", "false_positive"):
             alert.resolved_at = utcnow()
             alert.resolved_by = g.user.id
+        else:
+            alert.resolved_at = alert.resolved_by = None
+    if request.form.get("priority") in ("1", "2", "3", "4", "5"):
+        alert.priority = int(request.form["priority"])
     if request.form.get("assigned_to"):
         try:
             alert.assigned_to = int(request.form["assigned_to"]) or None
@@ -219,6 +246,8 @@ def alert_update(alert_id):
     if request.form.get("note") is not None:
         alert.resolution_note = request.form.get("note") or alert.resolution_note
     alert.updated_at = utcnow()
+    from .reviews import record_alert_review
+    record_alert_review(alert, g.user.username)
     db.session.commit()
     audit("alert_update", "alert:%d" % alert.id, "status=%s" % alert.status)
     if status in ("resolved", "false_positive") and request.form.get("extract_knowledge") == "1":
@@ -231,6 +260,7 @@ def alert_update(alert_id):
 
 @bp.route("/alerts/export.csv")
 @login_required
+@platform_view('alerts', export=True)
 def alerts_export():
     q = Alert.query.order_by(Alert.created_at.desc()).limit(10000)
     rows = ((al.id, al.created_at, al.title, al.severity, al.status, al.priority, al.host, al.src_ip, al.user_name,
@@ -245,6 +275,7 @@ def alerts_export():
 # --------------------------------------------------------------------- Rules
 @bp.route("/rules")
 @login_required
+@platform_view('rules', listing=True)
 def rules():
     rows = DetectionRule.query.order_by(DetectionRule.code).all()
     return render_template("rules.html", rules=rows)
@@ -264,11 +295,18 @@ def _rule_from_form(rule):
         raise ValueError("Tên luật không được để trống")
     rule.description = f.get("description")
     rule.rule_type = f.get("rule_type") if f.get("rule_type") in RULE_TYPES else "match"
+    from .detection import validate_conditions
+    try:
+        validate_conditions(cond, sequence=rule.rule_type == "sequence")
+    except (ValueError, TypeError, re.error) as exc:
+        raise ValueError("Điều kiện luật không hợp lệ: %s" % exc) from exc
     rule.severity = f.get("severity") if f.get("severity") in SEVERITIES else "medium"
     rule.enabled = f.get("enabled") == "1"
     rule.conditions = dumps(cond)
     rule.threshold_count = int(f.get("threshold_count") or 1)
     rule.window_seconds = int(f.get("window_seconds") or 300)
+    if rule.threshold_count < 1 or not 1 <= rule.window_seconds <= 86400:
+        raise ValueError("Ngưỡng phải dương; cửa sổ phải từ 1 đến 86400 giây")
     rule.group_by = f.get("group_by") or "src_ip"
     rule.distinct_field = (f.get("distinct_field") or "").strip() or None
     rule.title_template = (f.get("title_template") or "").strip() or None
@@ -279,6 +317,7 @@ def _rule_from_form(rule):
 
 @bp.route("/rules/new", methods=["GET", "POST"])
 @role_required("admin", "analyst")
+@platform_view('rules')
 def rule_new():
     rule = DetectionRule(rule_type="match", severity="medium", enabled=True, threshold_count=5,
                          window_seconds=300, group_by="src_ip", conditions="{}")
@@ -298,6 +337,7 @@ def rule_new():
 
 @bp.route("/rules/<int:rule_id>/edit", methods=["GET", "POST"])
 @role_required("admin", "analyst")
+@platform_view('rules')
 def rule_edit(rule_id):
     rule = db.session.get(DetectionRule, rule_id) or abort(404)
     if request.method == "POST":
@@ -315,6 +355,7 @@ def rule_edit(rule_id):
 
 @bp.post("/rules/<int:rule_id>/toggle")
 @role_required("admin", "analyst")
+@platform_view('rules')
 def rule_toggle(rule_id):
     rule = db.session.get(DetectionRule, rule_id) or abort(404)
     rule.enabled = not rule.enabled
@@ -325,6 +366,7 @@ def rule_toggle(rule_id):
 
 @bp.post("/rules/<int:rule_id>/delete")
 @role_required("admin")
+@platform_view('rules')
 def rule_delete(rule_id):
     rule = db.session.get(DetectionRule, rule_id) or abort(404)
     Alert.query.filter_by(rule_id=rule.id).update({Alert.rule_id: None})
@@ -337,6 +379,7 @@ def rule_delete(rule_id):
 
 @bp.post("/rules/replay")
 @role_required("admin", "analyst")
+@platform_view('rules')
 def rules_replay():
     hours = int(request.form.get("hours") or 24)
     since = utcnow() - timedelta(hours=hours)
@@ -351,6 +394,7 @@ def rules_replay():
 # ---------------------------------------------------------- Knowledge base
 @bp.route("/kb")
 @login_required
+@platform_view('kb', listing=True)
 def kb():
     q = KnowledgeArticle.query
     if request.args.get("q"):
@@ -367,6 +411,7 @@ def kb():
 
 @bp.route("/kb/<int:article_id>")
 @login_required
+@platform_view('kb')
 def kb_detail(article_id):
     art = db.session.get(KnowledgeArticle, article_id) or abort(404)
     return render_template("kb_detail.html", art=art)
@@ -375,6 +420,7 @@ def kb_detail(article_id):
 @bp.route("/kb/new", methods=["GET", "POST"])
 @bp.route("/kb/<int:article_id>/edit", methods=["GET", "POST"])
 @role_required("admin", "analyst")
+@platform_view('kb')
 def kb_edit(article_id=None):
     art = db.session.get(KnowledgeArticle, article_id) if article_id else KnowledgeArticle(category="playbook", source="manual")
     if art is None:
@@ -393,6 +439,8 @@ def kb_edit(article_id=None):
             if article_id is None:
                 art.created_by = g.user.username
                 db.session.add(art)
+            from .reviews import edit_knowledge_review
+            edit_knowledge_review(art, g.user.username, approve=f.get("approve") == "1")
             art.updated_at = utcnow()
             db.session.commit()
             audit("kb_save", art.title)
@@ -401,8 +449,79 @@ def kb_edit(article_id=None):
     return render_template("kb_form.html", art=art, is_new=article_id is None)
 
 
+@bp.route("/operations")
+@role_required("admin", "analyst")
+@platform_view('operations', listing=True)
+def operations():
+    from .models import WorkJob
+    jobs = WorkJob.query.order_by(WorkJob.id.desc()).limit(100).all()
+    counts = dict(db.session.query(WorkJob.status, func.count(WorkJob.id)).group_by(WorkJob.status).all())
+    worker = current_app.extensions.get("soc_worker")
+    return render_template("operations.html", jobs=jobs, counts=counts,
+                           worker_alive=bool(worker and worker.is_alive()))
+
+
+@bp.get("/comparison")
+@login_required
+def comparison():
+    """Read-only view of benchmark artifacts; never run experiments in a request."""
+    if request.args.get("mode") != "benchmark":
+        target = Path(current_app.instance_path) / "real_comparison.json"
+        live, error = None, None
+        try:
+            live = json.loads(target.read_text(encoding="utf-8"))
+            if live.get("schema") != "real-vm-comparison-v1":
+                live, error = None, "Bản đối chiếu máy thật chưa đúng định dạng."
+        except FileNotFoundError:
+            error = "Chưa xuất bản lượt đối chiếu máy thật mới. Benchmark tổng hợp cũ không được dùng thay kết quả VM."
+        except (OSError, ValueError, AttributeError):
+            error = "Bản đối chiếu máy thật đang cập nhật hoặc chưa đọc được."
+        from .comparison_results import comparison_rows, comparison_summary
+        rows = comparison_rows(live) if live else []
+        event_ids = [r["event_id"] for r in rows if r["event_id"] is not None]
+        evidence = {e.id: e for e in LogEvent.query.filter(LogEvent.id.in_(event_ids)).all()} if event_ids else {}
+        rows = comparison_rows(live, evidence) if live else []
+        from .comparison_explanations import rule_definitions, RULE_DIFFERENCES
+        definitions = rule_definitions(DetectionRule.query.filter(DetectionRule.code.in_([r['code'] for r in rows])).all(),
+                                       live.get('run_id') if live else None)
+        for row in rows:
+            row['definitions'] = definitions.get(row['code'])
+            if row['code'] in RULE_DIFFERENCES:
+                row['difference'] += ' ' + RULE_DIFFERENCES[row['code']]
+        return render_template("comparison_live.html", report=live, error=error,
+                               comparison_rows=rows, comparison_summary=comparison_summary(rows))
+    target = Path(current_app.config.get("COMPARISON_REPORT_PATH") or
+                  Path(__file__).resolve().parents[2] / "benchmarks" / "three_way" / "artifacts" / "pilot-v1" / "comparison.json")
+    report, error = None, None
+    try:
+        report = json.loads(target.read_text(encoding="utf-8"))
+        if report.get("schema") != "threeway-report-v1":
+            report, error = None, "Định dạng báo cáo chưa được hỗ trợ."
+    except FileNotFoundError:
+        error = "Chưa có báo cáo. Chạy tools/compare_three.py prepare và run để tạo kết quả."
+    except (OSError, ValueError, AttributeError):
+        error = "Báo cáo chưa đọc được hoặc đang được cập nhật. Hãy tải lại sau."
+    return render_template("comparison.html", report=report, error=error)
+
+
+@bp.post("/operations/jobs/<int:job_id>/retry")
+@role_required("admin", "analyst")
+@platform_view('operations')
+def retry_job(job_id):
+    from .models import WorkJob
+    changed = WorkJob.query.filter_by(id=job_id, status="failed").update({
+        "status": "queued", "attempts": 0, "available_at": utcnow(), "finished_at": None,
+        "lease_until": None, "lease_token": None}, synchronize_session=False)
+    db.session.commit()
+    if not changed:
+        abort(409)
+    audit("job_retry", "job:%d" % job_id)
+    return redirect(url_for("main.operations"))
+
+
 @bp.post("/kb/<int:article_id>/delete")
 @role_required("admin", "analyst")
+@platform_view('kb')
 def kb_delete(article_id):
     art = db.session.get(KnowledgeArticle, article_id) or abort(404)
     db.session.delete(art)
@@ -415,6 +534,7 @@ def kb_delete(article_id):
 # ------------------------------------------------------------------- Reports
 @bp.route("/reports")
 @login_required
+@platform_view('reports', listing=True)
 def reports():
     since, until = _parse_range(24)
     data = stats_mod.report_stats(since, until)
@@ -425,6 +545,7 @@ def reports():
 # -------------------------------------------------------------- IP reputation
 @bp.route("/ip-reputation", methods=["GET", "POST"])
 @login_required
+@platform_view('ip_reputation', listing=True)
 def ip_reputation():
     if request.method == "POST":
         if g.user.role not in ("admin", "analyst"):
@@ -445,6 +566,7 @@ def ip_reputation():
 
 @bp.post("/ip-reputation/<int:rec_id>/delete")
 @role_required("admin", "analyst")
+@platform_view('ip_reputation')
 def ip_reputation_delete(rec_id):
     rec = db.session.get(IpReputation, rec_id) or abort(404)
     db.session.delete(rec)

@@ -3,9 +3,11 @@ Flask>=3.0
 Flask-SQLAlchemy>=3.1
 SQLAlchemy>=2.0
 Werkzeug>=3.0
+tzdata>=2024.1
 
 # Module Agentic AI (tùy chọn - không có vẫn chạy ở chế độ suy luận cục bộ)
 anthropic>=2.0
+openai>=1.108.1
 
 # SOC Agent (soc_agent) chỉ dùng thư viện chuẩn Python; psutil là tùy chọn để gửi số liệu CPU/RAM
 psutil>=5.9

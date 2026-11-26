@@ -12,5 +12,6 @@
     <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.kb') }}">Danh sách</a></div>
 </div>
 {% if art.summary %}<div class="alert alert-info py-2">{{ art.summary }}</div>{% endif %}
+<div class="alert {{ 'alert-success' if art.review_status == 'approved' else 'alert-warning' }} py-2">{{ 'Đã duyệt để tác tử sử dụng' if art.review_status == 'approved' else 'Bản nháp — tác tử chưa sử dụng nội dung này' }}{% if art.review %} · phiên bản {{ art.review.revision }}{% if art.review.reviewed_by %} · {{ art.review.reviewed_by }}{% endif %}{% endif %}</div>
 <div class="card"><div class="card-body kb-content">{{ art.content|md|safe }}</div></div>
 {% endblock %}

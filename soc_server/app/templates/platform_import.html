@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Nhập kết quả nền tảng{% endblock %}
+{% block content %}
+<h4>Nhập kết quả Elastic Security / Wazuh</h4>
+<p>Tệp mới sẽ thay thế kết quả đã nhập của nền tảng tương ứng.</p>
+<form action="{{ url_for('platforms.import_results') }}" method="post" enctype="multipart/form-data" class="card card-body mb-4">
+  {{ csrf_field() }}
+  <label for="platform-upload" class="form-label">Tệp kết quả JSON (tối đa 16 MB)</label>
+  <input type="file" id="platform-upload" name="results" accept=".json,application/json" class="form-control mb-3" required>
+  <div><button type="submit" class="btn btn-primary">Nhập và xem kết quả</button></div>
+</form>
+<details class="mb-3"><summary>Hướng dẫn nhập dữ liệu</summary><p>Các chức năng có thể nhập: {% for key, spec in platform_features.items() %}<code>{{ key }}</code>{{ ', ' if not loop.last }}{% endfor %}.</p>
+<p>Chức năng chưa có trong tệp sẽ hiển thị “Chưa tích hợp”. Dùng <code>partial</code> khi chỉ xuất một phần dữ liệu; <code>total</code> là tổng số bản ghi trong nguồn, <code>records</code> là những dòng được xuất. Không chứa mật khẩu hoặc API key trong tệp.</p>
+</details><details><summary>Định dạng JSON minh họa (không phải kết quả thực đo)</summary><pre class="bg-light p-3 mt-2">{
+  "schema": "soc-platform-results-v1",
+  "platform": "wazuh",
+  "collected_at": "2026-11-25T08:00:00Z",
+  "source": "Wazuh lab — bản xuất quản trị",
+  "scope": "lab-01; khoảng thời gian và bộ dữ liệu thực tế đã xuất",
+  "features": {
+    "alerts": {
+      "status": "not_measured",
+      "reason": "Thay bằng dữ liệu xuất thực tế trước khi nhập",
+      "records": []
+    }
+  }
+}</pre></details>
+{% endblock %}
