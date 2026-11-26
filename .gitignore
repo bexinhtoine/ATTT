@@ -10,6 +10,17 @@ venv/
 /docs/
 /final_dataset/
 /output/
+/.chart-data-*/
+/slides_build/
+
+# Local report authoring and verification scripts
+/tools/build_report_verified.py
+/tools/check_merged_soc_report.py
+/tools/merge_expand_soc_report.py
+/tools/render_merged_soc_report.py
+/tools/report_algorithm_checks.py
+/tools/report_evidence.py
+/tools/report_render_word.py
 
 # Local editor/agent settings and unrelated model experiments
 /.codex/
